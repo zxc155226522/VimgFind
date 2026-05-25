@@ -512,6 +512,44 @@ class ThumbnailGridView(BasicImagePreviewView):
         else:
             self._canvas.itemconfig(canvas_item["placeholder_id"], text=f"{image_data.get('error', '加载失败')[:10]}")
 
+    def _on_action_enter(self, event: tk.Event) -> None:
+        tags = self._canvas.gettags(tk.CURRENT)
+        action_tag = next((t for t in tags if t.startswith("action:")), None)
+        if action_tag is None:
+            return
+        rect_tag = f"action_rect:{action_tag.split(':', 1)[1]}"
+        self._canvas.itemconfig(rect_tag, fill=self.theme_color.primary, outline=self.theme_color.primary)
+        text_tag = f"action_text:{action_tag.split(':', 1)[1]}"
+        self._canvas.itemconfig(text_tag, fill="white")
+        self._canvas.config(cursor="hand2")
+
+    def _on_action_leave(self, event: tk.Event) -> None:
+        tags = self._canvas.gettags(tk.CURRENT)
+        action_tag = next((t for t in tags if t.startswith("action:")), None)
+        if action_tag is None:
+            return
+        rect_tag = f"action_rect:{action_tag.split(':', 1)[1]}"
+        self._canvas.itemconfig(rect_tag, fill=self.theme_color.inputbg, outline=self.theme_color.primary)
+        text_tag = f"action_text:{action_tag.split(':', 1)[1]}"
+        self._canvas.itemconfig(text_tag, fill=self.theme_color.fg)
+        self._canvas.config(cursor="")
+
+    def _on_action_press(self, event: tk.Event) -> None:
+        tags = self._canvas.gettags(tk.CURRENT)
+        action_tag = next((t for t in tags if t.startswith("action:")), None)
+        if action_tag is None:
+            return
+        rect_tag = f"action_rect:{action_tag.split(':', 1)[1]}"
+        self._canvas.itemconfig(rect_tag, fill=self.theme_color.selectbg)
+
+    def _on_action_release(self, event: tk.Event) -> None:
+        tags = self._canvas.gettags(tk.CURRENT)
+        action_tag = next((t for t in tags if t.startswith("action:")), None)
+        if action_tag is None:
+            return
+        rect_tag = f"action_rect:{action_tag.split(':', 1)[1]}"
+        self._canvas.itemconfig(rect_tag, fill=self.theme_color.primary)
+
     def _create_action_buttons(self, item: str) -> None:
         if item not in self._canvas_items:
             return
@@ -528,21 +566,33 @@ class ThumbnailGridView(BasicImagePreviewView):
         for index, (action, label) in enumerate(labels):
             button_x1 = x + index * (button_width + self.BUTTON_GAP)
             button_x2 = button_x1 + button_width
-            tag = f"action:{action}"
+            action_tag = f"action:{action}"
+            rect_tag = f"action_rect:{action}"
+            text_tag = f"action_text:{action}"
             item_tag = f"item:{item}"
             rect_id = self._canvas.create_rectangle(
                 button_x1, button_y1, button_x2, button_y2,
                 outline=self.theme_color.primary,
                 fill=self.theme_color.inputbg,
-                tags=(tag, item_tag)
+                width=1,
+                tags=(action_tag, rect_tag, item_tag)
             )
             text_id = self._canvas.create_text(
                 (button_x1 + button_x2) // 2,
                 (button_y1 + button_y2) // 2,
                 text=label,
                 fill=self.theme_color.fg,
-                tags=(tag, item_tag)
+                font=("微软雅黑", 9),
+                tags=(action_tag, text_tag, item_tag)
             )
+            self._canvas.tag_bind(rect_tag, "<Enter>", self._on_action_enter, add="+")
+            self._canvas.tag_bind(rect_tag, "<Leave>", self._on_action_leave, add="+")
+            self._canvas.tag_bind(rect_tag, "<ButtonPress-1>", self._on_action_press, add="+")
+            self._canvas.tag_bind(rect_tag, "<ButtonRelease-1>", self._on_action_release, add="+")
+            self._canvas.tag_bind(text_tag, "<Enter>", self._on_action_enter, add="+")
+            self._canvas.tag_bind(text_tag, "<Leave>", self._on_action_leave, add="+")
+            self._canvas.tag_bind(text_tag, "<ButtonPress-1>", self._on_action_press, add="+")
+            self._canvas.tag_bind(text_tag, "<ButtonRelease-1>", self._on_action_release, add="+")
             action_ids.extend((rect_id, text_id))
         canvas_item["action_ids"] = action_ids
 
