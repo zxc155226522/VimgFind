@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Literal
 import datetime
 import os
+import subprocess
 
 from ui import WinGUI
 from widgets import BasicImagePreviewView, DetailListView, ThumbnailGridView
@@ -36,6 +37,7 @@ class CoreControl(WinGUI):
         self.preview_view.bind("<<ItemviewSelect>>", self.search_control.preview_found_image)
         self.preview_view.bind("<Control-a>", lambda e: self.preview_view.selection_set(tk.ALL))
         self.preview_view.bind("<Control-v>", lambda e: self.search_control.search_image_by_clipboard())
+        self.__bind_preview_item_actions()
         preview_widgets = (self.preview_canvas1, self.preview_canvas2, self.preview_view)
         for w in preview_widgets:
             w.bind("<Button-3>", lambda e, w=w: self.menu_control.create_right_click_menu(e, w))
@@ -65,6 +67,13 @@ class CoreControl(WinGUI):
         # 全局事件处理
         self.drop_target_register(DND_FILES)
         self.dnd_bind('<<Drop>>', self.__on_drop)
+
+    def __bind_preview_item_actions(self) -> None:
+        if not isinstance(self.preview_view, ThumbnailGridView):
+            return
+        self.preview_view.copy_image_callback = self.menu_control.copy_file_image_async
+        self.preview_view.copy_path_callback = self.menu_control.copy_file_path_async
+        self.preview_view.open_ps_callback = self.menu_control.open_file_with_photoshop_async
 
     @Decorator.send_task
     def __env_init(self) -> None:
@@ -383,8 +392,85 @@ class IndexTableControl(object):
 
 class MenuControl(object):
     ACTIVE_BORDER_WIDTH = 6
+    PHOTOSHOP_EXE_NAMES = ("Photoshop.exe", "photoshop.exe")
+    PHOTOSHOP_COMMON_PATHS = tuple(
+        Path("C:/Program Files/Adobe") / f"Adobe Photoshop {year}" / "Photoshop.exe"
+        for year in range(2026, 2018, -1)
+    )
+
     def __init__(self, core_control: CoreControl) -> None:
         self.core_control = core_control
+
+    def __get_selected_result_files(self) -> list[Path]:
+        selected_items = self.core_control.preview_view.selection()
+        if not selected_items:
+            messagebox.showinfo("提示", "请先选择搜索结果！")
+            return []
+        file_paths = [Path(self.core_control.preview_view.item(item)[0]) for item in selected_items]
+        exists_files = [file_path for file_path in file_paths if file_path.exists()]
+        if not exists_files:
+            messagebox.showinfo("提示", "选中文件不存在！")
+        return exists_files
+
+    @Decorator.send_task
+    def copy_selected_result_image(self) -> None:
+        file_paths = self.__get_selected_result_files()
+        if file_paths:
+            FileOperation.copy_files(*file_paths)
+
+    @Decorator.send_task
+    def copy_selected_result_path(self) -> None:
+        file_paths = self.__get_selected_result_files()
+        if file_paths:
+            FileOperation.copy_filepaths(*file_paths, tk=self.core_control)
+
+    @Decorator.send_task
+    def open_selected_result_with_photoshop(self) -> None:
+        file_paths = self.__get_selected_result_files()
+        if file_paths:
+            self.open_with_photoshop(file_paths[0])
+
+    @Decorator.send_task
+    def copy_file_image_async(self, file_path: Path) -> None:
+        if file_path.exists():
+            FileOperation.copy_files(file_path)
+        else:
+            messagebox.showinfo("提示", "文件不存在！")
+
+    @Decorator.send_task
+    def copy_file_path_async(self, file_path: Path) -> None:
+        if file_path.exists():
+            FileOperation.copy_filepaths(file_path, tk=self.core_control)
+        else:
+            messagebox.showinfo("提示", "文件不存在！")
+
+    @Decorator.send_task
+    def open_file_with_photoshop_async(self, file_path: Path) -> None:
+        if file_path.exists():
+            self.open_with_photoshop(file_path)
+        else:
+            messagebox.showinfo("提示", "文件不存在！")
+
+    def open_with_photoshop(self, file_path: Path) -> None:
+        for exe_name in self.PHOTOSHOP_EXE_NAMES:
+            try:
+                subprocess.Popen([exe_name, str(file_path)])
+                return
+            except FileNotFoundError:
+                pass
+            except Exception as e:
+                messagebox.showerror("错误", f"打开 Photoshop 失败：{e}")
+                return
+        for exe_path in self.PHOTOSHOP_COMMON_PATHS:
+            if not exe_path.exists():
+                continue
+            try:
+                subprocess.Popen([str(exe_path), str(file_path)])
+                return
+            except Exception as e:
+                messagebox.showerror("错误", f"打开 Photoshop 失败：{e}")
+                return
+        messagebox.showinfo("提示", "未找到 Photoshop，请确认已安装或将 Photoshop 加入 PATH。")
 
     def __get_item_files(self, event: tk.Event, preview_widget: BasicImagePreviewView) -> list[Path]:
         selected_items = preview_widget.selection()

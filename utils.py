@@ -20,6 +20,7 @@ import win32clipboard
 import win32con
 from tkinter import Tk
 from PIL import Image, ImageTk, ImageOps, UnidentifiedImageError
+from PIL.Image import DecompressionBombError
 from PIL.ImageFile import ImageFile
 from tqdm import tqdm
 
@@ -312,7 +313,8 @@ class ImageOperation(object):
     def get_image_obj(image_path: str | Path) -> ImageFile | None:
         try:
             return Image.open(image_path)
-        except (UnidentifiedImageError, OSError, FileNotFoundError) as e:
+        except (UnidentifiedImageError, DecompressionBombError, OSError, FileNotFoundError, MemoryError) as e:
+            logging.error(f"加载图片失败，已跳过 {image_path}: {e}")
             return
         
 
@@ -344,15 +346,21 @@ class ImageLoader:
                     item=item, size=(0, 0), photo=None, error="加载图片失败！"
             ))
             else:
-                width, height = img.size
-                img.thumbnail((thumbnail_size, thumbnail_size))
-                img =  ImageOps.exif_transpose(img)
-                self.result_queue.put(LoaderResult(
-                    item=item,
-                    size=(width, height), 
-                    photo=ImageTk.PhotoImage(img), 
-                    error=""
-                ))
+                try:
+                    width, height = img.size
+                    img.thumbnail((thumbnail_size, thumbnail_size))
+                    img =  ImageOps.exif_transpose(img)
+                    self.result_queue.put(LoaderResult(
+                        item=item,
+                        size=(width, height), 
+                        photo=ImageTk.PhotoImage(img), 
+                        error=""
+                    ))
+                except Exception as e:
+                    logging.error(f"加载缩略图失败，已跳过 {image_path}: {e}")
+                    self.result_queue.put(LoaderResult(
+                        item=item, size=(0, 0), photo=None, error="加载图片失败！"
+                    ))
             self.task_queue.task_done()
                 
     def get_results(self) -> list[LoaderResult]:

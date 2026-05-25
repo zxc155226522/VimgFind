@@ -24,7 +24,9 @@
         "index_capacity": 1000000,
         "index_dim": 512,
         "index_space": "cosine",
-        "search_dir": []
+        "search_dir": [
+            "E:/MaterialSearchWindows - 汇志/汇志png"
+        ]
     },
     "function_config": {
         "max_work_thread": 10,

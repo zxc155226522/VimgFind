@@ -93,16 +93,16 @@ class MultiModalEncoder:
         if self.image_session is None:
             return None
         
-        processed_image = self._preprocess_image(image_obj)
-        if processed_image is None:
-            return None
         try:
+            processed_image = self._preprocess_image(image_obj)
+            if processed_image is None:
+                return None
             input_name = self.image_session.get_inputs()[0].name
             result = self.image_session.run([], {input_name: processed_image})
             image_features = result[0][0]
             self._normalization(image_features)
         except Exception as e:
-            logging.error(f"编码图像时出现错误: {e}")
+            logging.error(f"编码图像时出现错误，已跳过: {e}")
             return None
         return image_features
     

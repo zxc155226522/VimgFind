@@ -1,1 +1,8 @@
-
+2026-05-24 19:57:28,395 -  加载备用向量索引失败，已重置索引: This file contains pickled (object) data. If you trust the file you can load it unsafely using the `allow_pickle=` keyword argument or `pickle.load()`.
+2026-05-25 17:19:30,415 -  加载图片失败，已跳过 E:\MaterialSearchWindows - 汇志\汇志png\EST2025-11月4日-14CM-袖子-白色-（JX985-530）-（JX985-474）.png: cannot identify image file 'E:\\MaterialSearchWindows - 汇志\\汇志png\\EST2025-11月4日-14CM-袖子-白色-（JX985-530）-（JX985-474）.png'
+2026-05-25 17:20:12,363 -  加载图片失败，已跳过 E:\MaterialSearchWindows - 汇志\汇志png\JX22-592-GODTISGOODAEETHE-袖子-黑色-12CMX4CM.png: cannot identify image file 'E:\\MaterialSearchWindows - 汇志\\汇志png\\JX22-592-GODTISGOODAEETHE-袖子-黑色-12CMX4CM.png'
+2026-05-25 17:20:36,668 -  加载图片失败，已跳过 37-两个金属爱心一大一小-18CM: [Errno 2] No such file or directory: '37-两个金属爱心一大一小-18CM'
+2026-05-25 17:20:49,007 -  加载图片失败，已跳过 E:\MaterialSearchWindows - 汇志\汇志png\JX58-177-LIKETOUQHGETAHELMET-白色-28CMX13CM.png: cannot identify image file 'E:\\MaterialSearchWindows - 汇志\\汇志png\\JX58-177-LIKETOUQHGETAHELMET-白色-28CMX13CM.png'
+2026-05-25 17:27:47,050 -  加载图片失败，已跳过 Z:\2026打版\5-25\汇志\补: [Errno 13] Permission denied: 'Z:\\2026打版\\5-25\\汇志\\补'
+2026-05-25 18:08:12,674 -  加载图片失败，已跳过 97-005: [Errno 2] No such file or directory: '97-005'
+2026-05-25 18:08:36,526 -  加载图片失败，已跳过 E:\MaterialSearchWindows - 汇志\汇志png\MINO熊猫笑脸-绿色帽子-黑色.png: cannot identify image file 'E:\\MaterialSearchWindows - 汇志\\汇志png\\MINO熊猫笑脸-绿色帽子-黑色.png'

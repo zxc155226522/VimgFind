@@ -198,6 +198,8 @@ class ThumbnailGridView(BasicImagePreviewView):
     THUMBNAIL_SIZE: int = WinInfo.TkS(110)
     MARGIN: int = WinInfo.TkS(10)
     FONT_HEGIHT: int = WinInfo.TkS(32)
+    BUTTON_HEIGHT: int = WinInfo.TkS(24)
+    BUTTON_GAP: int = WinInfo.TkS(4)
     PRELOAD_ROWS: int = 3
     def __init__(self, parent: tk.Widget) -> None:
         super().__init__(parent)
@@ -213,6 +215,9 @@ class ThumbnailGridView(BasicImagePreviewView):
         self._canvas_items: dict[str, dict[str, int]] = {}
         self._visible_items: set[str] = set()
         self._selected_items: set[str] = set()
+        self.copy_image_callback: Callable[[Path], None] | None = None
+        self.copy_path_callback: Callable[[Path], None] | None = None
+        self.open_ps_callback: Callable[[Path], None] | None = None
         
         # 定时器
         self._scroll_timer = ""
@@ -266,10 +271,14 @@ class ThumbnailGridView(BasicImagePreviewView):
     def _change_theme(self) -> None:
         super()._change_theme()
         for item_id in self._canvas.find_all():
+            tags = self._canvas.gettags(item_id)
             if self._canvas.type(item_id) == "text":
                 self._canvas.itemconfig(item_id, fill=self.theme_color.fg)
             elif self._canvas.type(item_id) == "rectangle":
-                self._canvas.itemconfig(item_id, fill=self.theme_color.selectbg)
+                if any(tag.startswith("action:") for tag in tags):
+                    self._canvas.itemconfig(item_id, fill=self.theme_color.inputbg, outline=self.theme_color.primary)
+                else:
+                    self._canvas.itemconfig(item_id, fill=self.theme_color.selectbg)
         self._canvas.configure(
             background=self.theme_color.inputbg,
             highlightbackground=self.theme_color.primary,
@@ -351,6 +360,7 @@ class ThumbnailGridView(BasicImagePreviewView):
             self._canvas.yview_moveto((item_y2 - self._canvas.winfo_height()) / total_height)
         elif item_y1 < canvas_y1:
             self._canvas.yview_moveto(item_y1 / total_height)
+        self._create_action_buttons(item)
         self._on_scrollbar_release(event)
 
     def _on_canvas_configure(self, event) -> None:
@@ -364,6 +374,11 @@ class ThumbnailGridView(BasicImagePreviewView):
 
     def _on_canvas_click(self, event: tk.Event) -> None:
         self._canvas.focus_set()
+        clicked_action = self._identify_action(event)
+        if clicked_action:
+            item, action = clicked_action
+            self._run_item_action(item, action)
+            return
         clicked_item = self.identify_item(event)
         if not clicked_item:
             return
@@ -462,13 +477,16 @@ class ThumbnailGridView(BasicImagePreviewView):
         self._canvas_items[item] = {
             "placeholder_id": placeholder_id, 
             "image_info_id": image_info_id,
+            "action_ids": [],
             "pos_index": len(self._results) - 1
         }
+        self._create_action_buttons(item)
 
     def _create_canvas_item(self, item: str) -> None:
         if item not in self._visible_image_data or item not in self._canvas_items:
             return
         
+        self._create_action_buttons(item)
         image_data = self._visible_image_data[item]
         canvas_item = self._canvas_items[item]
         x, y = self._get_item_position(item)
@@ -493,6 +511,61 @@ class ThumbnailGridView(BasicImagePreviewView):
                 self._canvas.itemconfig(canvas_item["image_id"], image=image_data['photo'])
         else:
             self._canvas.itemconfig(canvas_item["placeholder_id"], text=f"{image_data.get('error', '加载失败')[:10]}")
+
+    def _create_action_buttons(self, item: str) -> None:
+        if item not in self._canvas_items:
+            return
+        canvas_item = self._canvas_items[item]
+        for canvas_id in canvas_item.get("action_ids", []):
+            self._canvas.delete(canvas_id)
+        x, y = self._get_item_position(item)
+        labels = (("copy_image", "复制图"), ("copy_path", "路径"), ("open_ps", "PS"))
+        total_gap = self.BUTTON_GAP * (len(labels) - 1)
+        button_width = (self.THUMBNAIL_SIZE - total_gap) // len(labels)
+        button_y1 = y + self.THUMBNAIL_SIZE + self.FONT_HEGIHT + self.BUTTON_GAP
+        button_y2 = button_y1 + self.BUTTON_HEIGHT
+        action_ids = []
+        for index, (action, label) in enumerate(labels):
+            button_x1 = x + index * (button_width + self.BUTTON_GAP)
+            button_x2 = button_x1 + button_width
+            tag = f"action:{action}"
+            item_tag = f"item:{item}"
+            rect_id = self._canvas.create_rectangle(
+                button_x1, button_y1, button_x2, button_y2,
+                outline=self.theme_color.primary,
+                fill=self.theme_color.inputbg,
+                tags=(tag, item_tag)
+            )
+            text_id = self._canvas.create_text(
+                (button_x1 + button_x2) // 2,
+                (button_y1 + button_y2) // 2,
+                text=label,
+                fill=self.theme_color.fg,
+                tags=(tag, item_tag)
+            )
+            action_ids.extend((rect_id, text_id))
+        canvas_item["action_ids"] = action_ids
+
+    def _identify_action(self, event: tk.Event) -> tuple[str, str] | None:
+        canvas_id = self._canvas.find_withtag(tk.CURRENT)
+        if not canvas_id:
+            return None
+        tags = self._canvas.gettags(canvas_id[0])
+        action = next((tag.split(":", 1)[1] for tag in tags if tag.startswith("action:")), None)
+        item = next((tag.split(":", 1)[1] for tag in tags if tag.startswith("item:")), None)
+        if action is not None and item in self._results:
+            return item, action
+        return None
+
+    def _run_item_action(self, item: str, action: str) -> None:
+        file_path = Path(self._results[item][0])
+        callback = {
+            "copy_image": self.copy_image_callback,
+            "copy_path": self.copy_path_callback,
+            "open_ps": self.open_ps_callback,
+        }.get(action)
+        if callback is not None:
+            callback(file_path)
 
     def _set_item_selected(self, item: str, selected: bool) -> None:
         canvas_item = self._canvas_items[item]
@@ -532,9 +605,10 @@ class ThumbnailGridView(BasicImagePreviewView):
 
                 self._canvas.coords(canvas_item["placeholder_id"], x + self.THUMBNAIL_SIZE // 2, y + self.THUMBNAIL_SIZE // 2)
                 self._canvas.coords(canvas_item["image_info_id"],  x + self.THUMBNAIL_SIZE // 2, y + self.THUMBNAIL_SIZE + self.MARGIN // 2 + self.FONT_HEGIHT // 2)
+                self._create_action_buttons(item)
         
         rows = math.ceil(len(self._results) / self._cols) if self._cols > 0 else 0
-        item_height = self.THUMBNAIL_SIZE + self.MARGIN + self.FONT_HEGIHT
+        item_height = self.THUMBNAIL_SIZE + self.MARGIN + self.FONT_HEGIHT + self.BUTTON_HEIGHT + self.BUTTON_GAP
         total_height = rows * item_height + self.MARGIN * 2 if rows > 0 else 0
         if total_height > canvas_height:
             self._canvas.configure(scrollregion=(0, 0, canvas_width, total_height))
@@ -551,7 +625,7 @@ class ThumbnailGridView(BasicImagePreviewView):
         col = index % self._cols
         
         item_width = self.THUMBNAIL_SIZE + self.MARGIN
-        item_height = self.THUMBNAIL_SIZE + self.MARGIN + self.FONT_HEGIHT
+        item_height = self.THUMBNAIL_SIZE + self.MARGIN + self.FONT_HEGIHT + self.BUTTON_HEIGHT + self.BUTTON_GAP
         
         x = col * item_width + self.MARGIN + self.MARGIN // 2
         y = row * item_height + self.MARGIN + self.MARGIN // 2
@@ -564,7 +638,7 @@ class ThumbnailGridView(BasicImagePreviewView):
         
         canvas_y1 = self._canvas.canvasy(0)
         canvas_y2 = canvas_y1 + self._canvas.winfo_height()
-        item_height = self.THUMBNAIL_SIZE + self.MARGIN + 30
+        item_height = self.THUMBNAIL_SIZE + self.MARGIN + self.FONT_HEGIHT + self.BUTTON_HEIGHT + self.BUTTON_GAP
         
         start_row = max(0, canvas_y1 // item_height - self.PRELOAD_ROWS)
         end_row = min(math.ceil(len(self._results) / self._cols), canvas_y2 // item_height + self.PRELOAD_ROWS)
