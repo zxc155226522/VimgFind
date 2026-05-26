@@ -58,6 +58,7 @@ class SearchTool(object):
             Path(setting.get_config("index", "name_index_path")),
             setting.get_config("index", "max_match_count")
         )
+        self.__similarity_threshold = setting.get_config("function", "similarity_threshold")
         self.__multimodal_encoder = MultiModalEncoder(
             Path(setting.get_config("model", "vocab_path")),
             Path(setting.get_config("model", "image_encoder_path")),
@@ -126,6 +127,9 @@ class SearchTool(object):
     
     def update_max_match_count(self, max_match_count: int) -> None:
         self.__name_idx_mgr.update_max_match_count(max_match_count)
+
+    def update_similarity_threshold(self, threshold: float) -> None:
+        self.__similarity_threshold = threshold
         
     def update_index(self, image_dir, max_workers: int = 10) -> None:
         def _process_item(item) -> tuple[int, str, np.ndarray | None, bool]:
@@ -218,9 +222,18 @@ class SearchTool(object):
 
         if fv is None:
             return
-        sim_list, ids_list = self.__vec_idx_mgr.match(fv, results_count)
+
+        search_count = min(results_count * 3, self.__name_idx_mgr.valid_index_count)
+        sim_list, ids_list = self.__vec_idx_mgr.match(fv, search_count)
+
+        yielded = 0
         for img_id, similarity in zip(ids_list, sim_list):
+            if similarity < self.__similarity_threshold * 100:
+                continue
             yield (self.__name_idx_mgr.name_index[img_id][0], similarity)
+            yielded += 1
+            if yielded >= results_count:
+                break
         self.continue_update_index()
 
     def is_empty_index(self) -> bool:

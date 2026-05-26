@@ -23,7 +23,7 @@ class WinGUI(TkinterDnD.Tk):
         self.search_entry = self.__set_search_entry(self.search_tab)
         self.search_by_browser_btn = self.__set_search_by_browser_button(self.search_tab)
         self.search_by_clipboard_btn = self.__set_search_by_clipboard_button(self.search_tab)
-        self.more_options_button = self.__set_more_options_button(self.search_tab)
+        self.search_setting_bar = self.__set_search_setting_bar(self.search_tab)
         self.preview_container = self.__set_preview_results_frame(self.search_tab)
         self.preview_view = self.__set_preview_view(self.preview_container)
         self.preview_frame1 = self.__set_preview_frame1(self.search_tab)
@@ -92,14 +92,38 @@ class WinGUI(TkinterDnD.Tk):
         btn.place(relx=0.525, rely=0.0192, relwidth=0.1, relheight=0.0690)
         return btn
     
-    def __set_more_options_button(self, parent) -> Button:
-        button = Button(parent, text="• • •", takefocus=False, style=LINK, cursor="hand2")
-        button.place(relx=1, rely=0.0192, width=WinInfo.TkS(50), x=WinInfo.TkS(-50))
-        return button
+    def __set_search_setting_bar(self, parent) -> Frame:
+        bar = Frame(parent)
+        bar.place(relx=0.01, rely=0.095, relwidth=0.6170, relheight=0.04)
+
+        # 预览模式切换按钮
+        self.preview_detail_btn = Button(bar, text="详情", takefocus=False, bootstyle="outline-toolbutton")
+        self.preview_detail_btn.place(relx=0, rely=0.1, relwidth=0.08, relheight=0.8)
+
+        self.preview_icon_btn = Button(bar, text="图标", takefocus=False, bootstyle="outline-toolbutton")
+        self.preview_icon_btn.place(relx=0.09, rely=0.1, relwidth=0.08, relheight=0.8)
+
+        # 相似度滑块
+        self.similarity_label = Label(bar, text="相似度: 0%")
+        self.similarity_label.place(relx=0.22, rely=0.2, relwidth=0.14, relheight=0.6)
+
+        self.similarity_scale = Scale(bar, from_=0, to=100, orient=tk.HORIZONTAL, takefocus=False)
+        self.similarity_scale.set(0)
+        self.similarity_scale.place(relx=0.36, rely=0.15, relwidth=0.28, relheight=0.7)
+
+        # 显示数量
+        self.result_count_label = Label(bar, text="数量:")
+        self.result_count_label.place(relx=0.66, rely=0.2, relwidth=0.06, relheight=0.6)
+
+        self.result_count_entry = Entry(bar)
+        self.result_count_entry.insert(0, "300")
+        self.result_count_entry.place(relx=0.72, rely=0.15, relwidth=0.08, relheight=0.7)
+
+        return bar
     
     def __set_preview_results_frame(self, parent) -> Frame:
         preview_results_frame = Frame(parent)
-        preview_results_frame.place(relx=0.01, rely=0.1111, relwidth=0.6170, relheight=0.888)
+        preview_results_frame.place(relx=0.01, rely=0.145, relwidth=0.6170, relheight=0.855)
         return preview_results_frame
     
     def __set_preview_view(self, parent) -> BasicImagePreviewView:

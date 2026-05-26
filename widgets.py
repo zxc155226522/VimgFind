@@ -662,11 +662,13 @@ class ThumbnailGridView(BasicImagePreviewView):
     def _update_layout(self) -> None:
         canvas_width = self._canvas.winfo_width()
         canvas_height = self._canvas.winfo_height()
-        old_cols = self._cols
-        item_width = self.THUMBNAIL_SIZE + self.MARGIN
-        self._cols = max(1, (canvas_width - self.MARGIN * 2) // item_width)
-        
-        if old_cols != self._cols and old_cols != 0:
+
+        old_thumb_size = self.THUMBNAIL_SIZE
+        self._cols = 8
+        self.THUMBNAIL_SIZE = max(80, (canvas_width - self.MARGIN * 3) // self._cols - self.MARGIN)
+        size_changed = old_thumb_size != self.THUMBNAIL_SIZE
+
+        if size_changed and old_thumb_size != 0:
             for item, canvas_item in self._canvas_items.items():
                 x, y = self._get_item_position(item)
                 image_id = canvas_item.get("image_id", "")
@@ -680,9 +682,13 @@ class ThumbnailGridView(BasicImagePreviewView):
                 self._canvas.coords(canvas_item["placeholder_id"], x + self.THUMBNAIL_SIZE // 2, y + self.THUMBNAIL_SIZE // 2)
                 self._canvas.coords(canvas_item["image_info_id"],  x + self.THUMBNAIL_SIZE // 2, y + self.THUMBNAIL_SIZE + self.MARGIN // 2 + self.FONT_HEGIHT // 2)
                 self._create_action_buttons(item)
-        
-        rows = math.ceil(len(self._results) / self._cols) if self._cols > 0 else 0
+
+            # 缩略图尺寸变了，清除缓存以新尺寸重新加载
+            self._visible_image_data.clear()
+            self._load_visible_images()
+
         item_height = self.THUMBNAIL_SIZE + self.MARGIN + self.FONT_HEGIHT + self.BUTTON_HEIGHT + self.BUTTON_GAP
+        rows = math.ceil(len(self._results) / self._cols) if self._cols > 0 else 0
         total_height = rows * item_height + self.MARGIN * 2 if rows > 0 else 0
         if total_height > canvas_height:
             self._canvas.configure(scrollregion=(0, 0, canvas_width, total_height))

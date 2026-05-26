@@ -7,6 +7,7 @@ from typing import Literal
 import datetime
 import os
 import subprocess
+import logging
 
 from ui import WinGUI
 from widgets import BasicImagePreviewView, DetailListView, ThumbnailGridView
@@ -29,6 +30,7 @@ class CoreControl(WinGUI):
         self.search_control = SearchControl(self)
         self.menu_control = MenuControl(self)
         self.search_control.set_preview_mode(self.setting.get_config("function", "preview_mode"))
+        self.__init_settings_bar()
         self.__env_init()
         self.bind_event(first_time=True)
         
@@ -50,7 +52,12 @@ class CoreControl(WinGUI):
         self.search_by_browser_btn.config(command=self.search_control.search_by_browser)
         self.search_by_clipboard_btn.config(command=self.search_control.search_image_by_clipboard)
         self.search_entry.bind("<Return>", lambda e: self.search_control.search_image_by_text())
-        self.more_options_button.config(command=self.menu_control.create_preview_setting_menu)
+        
+        # 搜索设置栏
+        self.preview_detail_btn.config(command=lambda: self.search_control.set_preview_mode("detail_info"))
+        self.preview_icon_btn.config(command=lambda: self.search_control.set_preview_mode("medium_ico"))
+        self.similarity_scale.config(command=self.search_control.set_similarity_threshold)
+        self.result_count_entry.bind("<Return>", self.search_control.set_preview_result_count_from_entry)
         
         # 索引设置项
         self.index_dataset_table.bind("<Double-Button-1>", self.menu_control.double_click_open_file)
@@ -85,6 +92,14 @@ class CoreControl(WinGUI):
         else:
             self.index_table_control.update_index_tip()
         self.after(self.setting.schedule_save_interval, self.__schedule_save)
+
+    def __init_settings_bar(self) -> None:
+        threshold = self.setting.get_config("function", "similarity_threshold")
+        self.similarity_scale.set(int(threshold * 100))
+        self.similarity_label.config(text=f"相似度: {int(threshold * 100)}%")
+        max_count = self.setting.get_config("index", "max_match_count")
+        self.result_count_entry.delete(0, tk.END)
+        self.result_count_entry.insert(0, str(max_count))
 
     def __change_theme(self, setting_theme=False) -> None:
         style = Style()
@@ -196,27 +211,32 @@ class SearchControl(object):
         self._is_finish_search = False
         self._last_search_content = input_data
         self.core_control.preview_view.clear_results()
-        results = self.core_control.search_tools.checkout(input_data)
         try:
-            first_result = next(results)
-        except StopIteration:
-            if self.core_control.search_tools.is_empty_index():
-                messagebox.showinfo("提示", "索引中还没有任何图像，也许\n你还没有添加并更新索引目录？")
-            else:
-                messagebox.showerror("错误", "图片搜索失败！\n请查看config/error.log获取错误信息！")
+            results = self.core_control.search_tools.checkout(input_data)
+            try:
+                first_result = next(results)
+            except StopIteration:
+                if self.core_control.search_tools.is_empty_index():
+                    messagebox.showinfo("提示", "索引中还没有任何图像，也许\n你还没有添加并更新索引目录？")
+                else:
+                    messagebox.showerror("错误", "图片搜索失败！\n请查看config/error.log获取错误信息！")
+                self._is_finish_search = True
+                return
+            first_img_path, first_sim = first_result
+            if Path(first_img_path).exists():
+                first_extra_info = self.generate_extra_info(first_img_path, first_sim)
+                item = self.core_control.preview_view.append_result(first_img_path, *first_extra_info)
+                self.core_control.preview_view.selection_set(item)
+            
+            for img_path, similarity in results:
+                if Path(img_path).exists():
+                    extra_info = self.generate_extra_info(img_path, similarity)
+                    self.core_control.preview_view.append_result(img_path, *extra_info)
+        except Exception as e:
+            logging.error(f"搜索时发生异常: {e}", exc_info=True)
+            messagebox.showerror("错误", f"搜索失败：{e}")
+        finally:
             self._is_finish_search = True
-            return
-        first_img_path, first_sim = first_result
-        if Path(first_img_path).exists():
-            first_extra_info = self.generate_extra_info(first_img_path, first_sim)
-            item = self.core_control.preview_view.append_result(first_img_path, *first_extra_info)
-            self.core_control.preview_view.selection_set(item)
-        
-        for img_path, similarity in results:
-            if Path(img_path).exists():
-                extra_info = self.generate_extra_info(img_path, similarity)
-                self.core_control.preview_view.append_result(img_path, *extra_info)
-        self._is_finish_search = True
 
     def generate_extra_info(self, image_path: str, similarity: float) -> tuple:
         image_path_obj = Path(image_path)
@@ -229,10 +249,33 @@ class SearchControl(object):
         return content
 
     def set_preview_result_count(self, max_match_count: int) -> None:
-        self.core_control.setting.modity_config("index", "max_match_count", min(max_match_count, 100))
+        self.core_control.setting.modity_config("index", "max_match_count", max_match_count)
         self.core_control.search_tools.update_max_match_count(max_match_count)
+        self._re_search()
+
+    @Decorator.send_task
+    def _re_search(self) -> None:
         if self._last_search_content:
             self.__search_image(self._last_search_content)
+
+    def set_preview_result_count_from_entry(self, event: tk.Event | None = None) -> None:
+        try:
+            count = int(self.core_control.result_count_entry.get().strip())
+            if count < 1:
+                count = 1
+            self.set_preview_result_count(count)
+        except ValueError:
+            self.core_control.result_count_entry.delete(0, tk.END)
+            self.core_control.result_count_entry.insert(0, str(
+                self.core_control.setting.get_config("index", "max_match_count")
+            ))
+
+    def set_similarity_threshold(self, value: str) -> None:
+        threshold = int(float(value)) / 100
+        self.core_control.similarity_label.config(text=f"相似度: {int(float(value))}%")
+        self.core_control.setting.modity_config("function", "similarity_threshold", threshold)
+        self.core_control.search_tools.update_similarity_threshold(threshold)
+        self._re_search()
 
     def set_preview_mode(self, mode: Literal["detail_info", "medium_ico"]) -> None:
         results = self.core_control.preview_view.get_show_results()
@@ -601,25 +644,6 @@ class MenuControl(object):
             menu.add_command(label=label, command=cmd, compound=tk.LEFT)
         
         menu.post(event.x_root, event.y_root)
-        menu.bind("<Unmap>", lambda e: menu.destroy())
-
-    def create_preview_setting_menu(self) -> None:
-        btn = self.core_control.more_options_button
-        menu = tk.Menu(tearoff=0, activeborderwidth=self.ACTIVE_BORDER_WIDTH)
-        menu.add_command(label="详情模式", command=lambda: self.core_control.search_control.set_preview_mode("detail_info"))
-        menu.add_command(label="图标模式", command=lambda: self.core_control.search_control.set_preview_mode("medium_ico"))
-        menu.add_separator()
-        menu.add_command(label="结果数: 10", command=lambda: self.core_control.search_control.set_preview_result_count(10))
-        menu.add_command(label="结果数: 30", command=lambda: self.core_control.search_control.set_preview_result_count(30))
-        menu.add_command(label="结果数: 50", command=lambda: self.core_control.search_control.set_preview_result_count(50))
-        menu.add_command(label="结果数: 100", command=lambda: self.core_control.search_control.set_preview_result_count(100))
-        menu.add_separator()
-        menu.add_command(label="过滤器", command=lambda: None)
-        menu.add_command(label="清理过滤", command=lambda: None)
-        menu.post(
-            btn.winfo_rootx() + WinInfo.TkS(btn.winfo_width() - menu.winfo_screenmmwidth(), restore=True), 
-            btn.winfo_rooty() + WinInfo.TkS(25)
-        )
         menu.bind("<Unmap>", lambda e: menu.destroy())
 
     def double_click_open_file(self, event: tk.Event, widget = None) -> None:
