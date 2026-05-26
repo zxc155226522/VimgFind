@@ -29,9 +29,10 @@
         ]
     },
     "function_config": {
-        "max_work_thread": 10,
+        "max_work_thread": 4,
         "preview_mode": "medium_ico",
-        "auto_update_index": true,
-        "ui_style": "superhero"
+        "auto_update_index": false,
+        "ui_style": "superhero",
+        "photoshop_path": "C:\\Program Files\\ps\\Adobe Photoshop CC 2018\\Photoshop.exe"
     }
 }

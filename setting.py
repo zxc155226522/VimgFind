@@ -54,8 +54,8 @@ class WinInfo(object):
     scale_factor = ctypes.windll.shcore.GetScaleFactorForDevice(0) / 100
     ico_path = "config/favicon.ico"
     title = "Vimgfind"
-    width = 830
-    height = 560
+    width = 1000
+    height = 700
 
     @staticmethod
     def TkS(value: int | float, restore: bool = False) -> int:

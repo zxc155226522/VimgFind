@@ -6,6 +6,7 @@ from collections import OrderedDict, namedtuple
 import math
 import hashlib
 import os
+from pathlib import Path
 
 
 from PIL import Image, ImageTk, ImageOps, UnidentifiedImageError
@@ -198,7 +199,7 @@ class ThumbnailGridView(BasicImagePreviewView):
     THUMBNAIL_SIZE: int = WinInfo.TkS(110)
     MARGIN: int = WinInfo.TkS(10)
     FONT_HEGIHT: int = WinInfo.TkS(32)
-    BUTTON_HEIGHT: int = WinInfo.TkS(24)
+    BUTTON_HEIGHT: int = WinInfo.TkS(30)
     BUTTON_GAP: int = WinInfo.TkS(4)
     PRELOAD_ROWS: int = 3
     def __init__(self, parent: tk.Widget) -> None:
@@ -215,6 +216,8 @@ class ThumbnailGridView(BasicImagePreviewView):
         self._canvas_items: dict[str, dict[str, int]] = {}
         self._visible_items: set[str] = set()
         self._selected_items: set[str] = set()
+        self._button_areas: dict[str, dict[str, tuple]] = {}
+        self._hovered_button: tuple[str, str] | None = None
         self.copy_image_callback: Callable[[Path], None] | None = None
         self.copy_path_callback: Callable[[Path], None] | None = None
         self.open_ps_callback: Callable[[Path], None] | None = None
@@ -261,6 +264,9 @@ class ThumbnailGridView(BasicImagePreviewView):
         self._canvas.bind("<Button-4>", self._on_mousewheel)  # Linux
         self._canvas.bind("<Button-5>", self._on_mousewheel)  # Linux
         self._canvas.bind("<Button-1>", self._on_canvas_click)
+        self._canvas.bind("<ButtonPress-1>", self._on_action_press, add="+")
+        self._canvas.bind("<ButtonRelease-1>", self._on_action_release, add="+")
+        self._canvas.bind("<Motion>", self._on_action_motion, add="+")
         self._canvas.bind("<KeyPress>", self._on_keyboard_click)
         self._canvas.bind("<<ThemeChanged>>", lambda e: self._change_theme())
         self._canvas.bind("<Enter>", lambda e: self._canvas.config(highlightbackground=self.theme_color.primary))
@@ -512,42 +518,65 @@ class ThumbnailGridView(BasicImagePreviewView):
         else:
             self._canvas.itemconfig(canvas_item["placeholder_id"], text=f"{image_data.get('error', '加载失败')[:10]}")
 
-    def _on_action_enter(self, event: tk.Event) -> None:
-        tags = self._canvas.gettags(tk.CURRENT)
-        action_tag = next((t for t in tags if t.startswith("action:")), None)
-        if action_tag is None:
-            return
-        rect_tag = f"action_rect:{action_tag.split(':', 1)[1]}"
-        self._canvas.itemconfig(rect_tag, fill=self.theme_color.primary, outline=self.theme_color.primary)
-        text_tag = f"action_text:{action_tag.split(':', 1)[1]}"
-        self._canvas.itemconfig(text_tag, fill="white")
-        self._canvas.config(cursor="hand2")
+    def _on_action_motion(self, event: tk.Event) -> None:
+        """通过 Motion 事件检测鼠标是否悬停在按钮上，更新 hover 状态"""
+        cx = self._canvas.canvasx(event.x)
+        cy = self._canvas.canvasy(event.y)
+        new_hover: tuple[str, str] | None = None
+        for item, actions in self._button_areas.items():
+            if item not in self._canvas_items:
+                continue
+            for action, (x1, y1, x2, y2) in actions.items():
+                if x1 <= cx <= x2 and y1 <= cy <= y2:
+                    new_hover = (item, action)
+                    break
+            if new_hover:
+                break
 
-    def _on_action_leave(self, event: tk.Event) -> None:
-        tags = self._canvas.gettags(tk.CURRENT)
-        action_tag = next((t for t in tags if t.startswith("action:")), None)
-        if action_tag is None:
+        old_hover = self._hovered_button
+        if new_hover == old_hover:
             return
-        rect_tag = f"action_rect:{action_tag.split(':', 1)[1]}"
-        self._canvas.itemconfig(rect_tag, fill=self.theme_color.inputbg, outline=self.theme_color.primary)
-        text_tag = f"action_text:{action_tag.split(':', 1)[1]}"
-        self._canvas.itemconfig(text_tag, fill=self.theme_color.fg)
-        self._canvas.config(cursor="")
+
+        # 取消旧按钮的 hover
+        if old_hover is not None:
+            old_item, old_action = old_hover
+            if old_item in self._canvas_items:
+                old_rect_tag = f"action_rect:{old_action}:{old_item}"
+                old_text_tag = f"action_text:{old_action}:{old_item}"
+                self._canvas.itemconfig(old_rect_tag, fill=self.theme_color.inputbg, outline=self.theme_color.primary)
+                self._canvas.itemconfig(old_text_tag, fill=self.theme_color.fg)
+
+        # 设置新按钮的 hover
+        if new_hover is not None:
+            new_item, new_action = new_hover
+            new_rect_tag = f"action_rect:{new_action}:{new_item}"
+            new_text_tag = f"action_text:{new_action}:{new_item}"
+            self._canvas.itemconfig(new_rect_tag, fill=self.theme_color.primary, outline=self.theme_color.primary)
+            self._canvas.itemconfig(new_text_tag, fill="white")
+            self._canvas.config(cursor="hand2")
+        else:
+            self._canvas.config(cursor="")
+
+        self._hovered_button = new_hover
 
     def _on_action_press(self, event: tk.Event) -> None:
-        tags = self._canvas.gettags(tk.CURRENT)
-        action_tag = next((t for t in tags if t.startswith("action:")), None)
-        if action_tag is None:
+        """鼠标按下时显示按压状态"""
+        if self._hovered_button is None:
             return
-        rect_tag = f"action_rect:{action_tag.split(':', 1)[1]}"
+        item, action = self._hovered_button
+        if item not in self._canvas_items:
+            return
+        rect_tag = f"action_rect:{action}:{item}"
         self._canvas.itemconfig(rect_tag, fill=self.theme_color.selectbg)
 
     def _on_action_release(self, event: tk.Event) -> None:
-        tags = self._canvas.gettags(tk.CURRENT)
-        action_tag = next((t for t in tags if t.startswith("action:")), None)
-        if action_tag is None:
+        """鼠标松开时恢复 hover 状态"""
+        if self._hovered_button is None:
             return
-        rect_tag = f"action_rect:{action_tag.split(':', 1)[1]}"
+        item, action = self._hovered_button
+        if item not in self._canvas_items:
+            return
+        rect_tag = f"action_rect:{action}:{item}"
         self._canvas.itemconfig(rect_tag, fill=self.theme_color.primary)
 
     def _create_action_buttons(self, item: str) -> None:
@@ -563,12 +592,13 @@ class ThumbnailGridView(BasicImagePreviewView):
         button_y1 = y + self.THUMBNAIL_SIZE + self.FONT_HEGIHT + self.BUTTON_GAP
         button_y2 = button_y1 + self.BUTTON_HEIGHT
         action_ids = []
+        item_areas: dict[str, tuple] = {}
         for index, (action, label) in enumerate(labels):
             button_x1 = x + index * (button_width + self.BUTTON_GAP)
             button_x2 = button_x1 + button_width
             action_tag = f"action:{action}"
-            rect_tag = f"action_rect:{action}"
-            text_tag = f"action_text:{action}"
+            rect_tag = f"action_rect:{action}:{item}"
+            text_tag = f"action_text:{action}:{item}"
             item_tag = f"item:{item}"
             rect_id = self._canvas.create_rectangle(
                 button_x1, button_y1, button_x2, button_y2,
@@ -585,16 +615,10 @@ class ThumbnailGridView(BasicImagePreviewView):
                 font=("微软雅黑", 9),
                 tags=(action_tag, text_tag, item_tag)
             )
-            self._canvas.tag_bind(rect_tag, "<Enter>", self._on_action_enter, add="+")
-            self._canvas.tag_bind(rect_tag, "<Leave>", self._on_action_leave, add="+")
-            self._canvas.tag_bind(rect_tag, "<ButtonPress-1>", self._on_action_press, add="+")
-            self._canvas.tag_bind(rect_tag, "<ButtonRelease-1>", self._on_action_release, add="+")
-            self._canvas.tag_bind(text_tag, "<Enter>", self._on_action_enter, add="+")
-            self._canvas.tag_bind(text_tag, "<Leave>", self._on_action_leave, add="+")
-            self._canvas.tag_bind(text_tag, "<ButtonPress-1>", self._on_action_press, add="+")
-            self._canvas.tag_bind(text_tag, "<ButtonRelease-1>", self._on_action_release, add="+")
             action_ids.extend((rect_id, text_id))
+            item_areas[action] = (button_x1, button_y1, button_x2, button_y2)
         canvas_item["action_ids"] = action_ids
+        self._button_areas[item] = item_areas
 
     def _identify_action(self, event: tk.Event) -> tuple[str, str] | None:
         canvas_id = self._canvas.find_withtag(tk.CURRENT)
@@ -723,6 +747,8 @@ class ThumbnailGridView(BasicImagePreviewView):
         self._canvas_items.clear()
         self._visible_items.clear()
         self._selected_items.clear()
+        self._button_areas.clear()
+        self._hovered_button = None
         self._canvas.delete(tk.ALL)        
         self._update_layout()
 

@@ -395,11 +395,18 @@ class MenuControl(object):
     PHOTOSHOP_EXE_NAMES = ("Photoshop.exe", "photoshop.exe")
     PHOTOSHOP_COMMON_PATHS = tuple(
         Path("C:/Program Files/Adobe") / f"Adobe Photoshop {year}" / "Photoshop.exe"
-        for year in range(2026, 2018, -1)
+        for year in range(2030, 2018, -1)
+    ) + (
+        Path("C:/Program Files (x86)/Adobe/Adobe Photoshop") / "Photoshop.exe",
     )
 
     def __init__(self, core_control: CoreControl) -> None:
         self.core_control = core_control
+        # 程序启动时自动检测并更新PS路径
+        self.photoshop_path = self._detect_photoshop_path()
+        if self.photoshop_path:
+            self.core_control.setting.modity_config("function", "photoshop_path", str(self.photoshop_path))
+            self.core_control.setting.save_settings()
 
     def __get_selected_result_files(self) -> list[Path]:
         selected_items = self.core_control.preview_view.selection()
@@ -452,25 +459,97 @@ class MenuControl(object):
             messagebox.showinfo("提示", "文件不存在！")
 
     def open_with_photoshop(self, file_path: Path) -> None:
-        for exe_name in self.PHOTOSHOP_EXE_NAMES:
+        if self.photoshop_path and self.photoshop_path.exists():
             try:
-                subprocess.Popen([exe_name, str(file_path)])
+                subprocess.Popen([str(self.photoshop_path), str(file_path)])
                 return
-            except FileNotFoundError:
-                pass
             except Exception as e:
                 messagebox.showerror("错误", f"打开 Photoshop 失败：{e}")
                 return
-        for exe_path in self.PHOTOSHOP_COMMON_PATHS:
-            if not exe_path.exists():
-                continue
+        # 缓存失效，重新检测
+        self.photoshop_path = self._detect_photoshop_path()
+        if self.photoshop_path:
             try:
-                subprocess.Popen([str(exe_path), str(file_path)])
+                subprocess.Popen([str(self.photoshop_path), str(file_path)])
+                self.core_control.setting.modity_config("function", "photoshop_path", str(self.photoshop_path))
+                self.core_control.setting.save_settings()
                 return
             except Exception as e:
                 messagebox.showerror("错误", f"打开 Photoshop 失败：{e}")
                 return
         messagebox.showinfo("提示", "未找到 Photoshop，请确认已安装或将 Photoshop 加入 PATH。")
+
+    def _detect_photoshop_path(self) -> Path | None:
+        """自动检测 Photoshop 安装路径，优先级：注册表 > 配置文件 > 常见路径 > 进程名"""
+        # 1. 注册表：App Paths 键（最可靠）
+        try:
+            import winreg
+            for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+                try:
+                    with winreg.OpenKey(hive, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\Photoshop.exe") as key:
+                        ps_path = Path(winreg.QueryValue(key, None))
+                        if ps_path.exists():
+                            return ps_path
+                except OSError:
+                    pass
+        except Exception:
+            pass
+
+        # 2. 注册表：Adobe Photoshop 版本键
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Adobe\Photoshop") as ps_key:
+                i = 0
+                while True:
+                    try:
+                        version = winreg.EnumKey(ps_key, i)
+                        try:
+                            with winreg.OpenKey(ps_key, version) as ver_key:
+                                app_path = winreg.QueryValueEx(ver_key, "ApplicationPath")[0]
+                                ps_path = Path(app_path) / "Photoshop.exe"
+                                if ps_path.exists():
+                                    return ps_path
+                        except OSError:
+                            pass
+                        i += 1
+                    except OSError:
+                        break
+        except Exception:
+            pass
+
+        # 3. 从配置文件读取上次缓存的路径
+        try:
+            cached = Path(self.core_control.setting.get_config("function", "photoshop_path"))
+            if cached.exists():
+                return cached
+        except Exception:
+            pass
+
+        # 4. 常见安装路径
+        for ps_path in self.PHOTOSHOP_COMMON_PATHS:
+            if ps_path.exists():
+                return ps_path
+
+        # 5. 通过进程名查找（最后兜底）
+        try:
+            result = subprocess.run(
+                ['tasklist', '/fi', 'imagename eq Photoshop.exe', '/fo', 'csv', '/nh'],
+                capture_output=True, text=True, timeout=5
+            )
+            if 'Photoshop.exe' in result.stdout:
+                for exe_name in self.PHOTOSHOP_EXE_NAMES:
+                    try:
+                        which = subprocess.run(['where', exe_name], capture_output=True, text=True, timeout=5)
+                        if which.returncode == 0 and which.stdout.strip():
+                            ps_path = Path(which.stdout.strip().split('\n')[0])
+                            if ps_path.exists():
+                                return ps_path
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        return None
 
     def __get_item_files(self, event: tk.Event, preview_widget: BasicImagePreviewView) -> list[Path]:
         selected_items = preview_widget.selection()
