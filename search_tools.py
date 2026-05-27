@@ -236,6 +236,24 @@ class SearchTool(object):
                 break
         self.continue_update_index()
 
+    def checkout_by_name(self, query: str) -> Iterator[tuple[str, float]]:
+        """按文件名搜索"""
+        self.__init_event.wait()
+        if not query:
+            return
+        results_count = self.__name_idx_mgr.results_count
+        query_lower = query.lower()
+        yielded = 0
+        for path, _ in self.__name_idx_mgr.name_index:
+            if path == NameIndexManager.NOTEXISTS:
+                continue
+            name = Path(path).stem.lower()
+            if query_lower in name:
+                yield (path, 100.0)
+                yielded += 1
+                if yielded >= results_count:
+                    break
+
     def is_empty_index(self) -> bool:
         return self.__name_idx_mgr.results_count == 0
     

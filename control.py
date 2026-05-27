@@ -52,6 +52,8 @@ class CoreControl(WinGUI):
         self.search_by_browser_btn.config(command=self.search_control.search_by_browser)
         self.search_by_clipboard_btn.config(command=self.search_control.search_image_by_clipboard)
         self.search_entry.bind("<Return>", lambda e: self.search_control.search_image_by_text())
+        self.search_btn.config(command=self.search_control.search_image_by_text)
+        self.search_mode_btn.config(command=self.search_control.toggle_search_mode)
         
         # 搜索设置栏
         self.preview_detail_btn.config(command=lambda: self.search_control.set_preview_mode("detail_info"))
@@ -151,8 +153,16 @@ class SearchControl(object):
     def __init__(self, core_control: CoreControl) -> None:
         self._last_search_content: Image.Image | str = ""
         self._is_finish_search: bool = True
+        self._is_name_search: bool = True
         self._preview_timer: str = ""
         self.core_control = core_control
+
+    def toggle_search_mode(self) -> None:
+        self._is_name_search = not self._is_name_search
+        if self._is_name_search:
+            self.core_control.search_mode_btn.config(text="文件名搜索")
+        else:
+            self.core_control.search_mode_btn.config(text="语义搜索")
 
     @Decorator.send_task
     def search_by_browser(self, image_path: str | None = None) -> None:
@@ -212,7 +222,10 @@ class SearchControl(object):
         self._last_search_content = input_data
         self.core_control.preview_view.clear_results()
         try:
-            results = self.core_control.search_tools.checkout(input_data)
+            if isinstance(input_data, str) and self._is_name_search:
+                results = self.core_control.search_tools.checkout_by_name(input_data)
+            else:
+                results = self.core_control.search_tools.checkout(input_data)
             try:
                 first_result = next(results)
             except StopIteration:

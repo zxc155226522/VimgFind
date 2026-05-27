@@ -21,6 +21,7 @@ class WinGUI(TkinterDnD.Tk):
         self.__win()
         self.switch_tab = self.__set_switch_tab(self)
         self.search_entry = self.__set_search_entry(self.search_tab)
+        self.search_btn = self.__set_search_button(self.search_tab)
         self.search_by_browser_btn = self.__set_search_by_browser_button(self.search_tab)
         self.search_by_clipboard_btn = self.__set_search_by_clipboard_button(self.search_tab)
         self.search_setting_bar = self.__set_search_setting_bar(self.search_tab)
@@ -79,17 +80,22 @@ class WinGUI(TkinterDnD.Tk):
     
     def __set_search_entry(self, parent) -> Entry:
         ipt = Entry(parent)
-        ipt.place(relx=0.01, rely=0.02, relwidth=0.395, relheight=0.0690)
+        ipt.place(relx=0.01, rely=0.02, relwidth=0.275, relheight=0.0690)
         return ipt
-    
+
+    def __set_search_button(self, parent) -> Button:
+        btn = Button(parent, text="搜索", takefocus=False, bootstyle="primary")
+        btn.place(relx=0.295, rely=0.0192, relwidth=0.08, relheight=0.0690)
+        return btn
+
     def __set_search_by_browser_button(self, parent) -> Button:
         btn = Button(parent, text="浏览", takefocus=False,)
-        btn.place(relx=0.415, rely=0.0192, relwidth=0.1, relheight=0.0690)
+        btn.place(relx=0.385, rely=0.0192, relwidth=0.1, relheight=0.0690)
         return btn
     
     def __set_search_by_clipboard_button(self, parent) -> Button:
         btn = Button(parent, text="剪切板", takefocus=False,)
-        btn.place(relx=0.525, rely=0.0192, relwidth=0.1, relheight=0.0690)
+        btn.place(relx=0.495, rely=0.0192, relwidth=0.1, relheight=0.0690)
         return btn
     
     def __set_search_setting_bar(self, parent) -> Frame:
@@ -118,6 +124,10 @@ class WinGUI(TkinterDnD.Tk):
         self.result_count_entry = Entry(bar)
         self.result_count_entry.insert(0, "300")
         self.result_count_entry.place(relx=0.72, rely=0.15, relwidth=0.08, relheight=0.7)
+
+        # 搜索模式切换
+        self.search_mode_btn = Button(bar, text="文件名搜索", takefocus=False, bootstyle="outline-toolbutton")
+        self.search_mode_btn.place(relx=0.84, rely=0.1, relwidth=0.16, relheight=0.8)
 
         return bar
     

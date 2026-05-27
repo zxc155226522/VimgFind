@@ -227,6 +227,7 @@ class ThumbnailGridView(BasicImagePreviewView):
         self._scrollbar_drag_timer = ""
 
         self._cols = 0
+        self._target_cols = 8
         self._is_destroy = False
         self._is_scrollbar_dragging = False
         
@@ -320,7 +321,16 @@ class ThumbnailGridView(BasicImagePreviewView):
         self._schedule_load()
     
     def _on_mousewheel(self, event: tk.Event) -> None:
-        # Windows和Mac
+        # Ctrl + 滚轮：缩放缩略图（调整列数）
+        ctrl_pressed = (event.state & 0x0004) != 0
+        if ctrl_pressed:
+            if event.delta:
+                delta = 1 if event.delta > 0 else -1
+                self._target_cols = max(2, min(20, self._target_cols - delta))
+                self._update_layout()
+            return
+
+        # 普通滚动
         if event.delta:
             delta = int(-1 * (event.delta / 120))
             self._canvas.yview_scroll(delta, "units")
@@ -664,8 +674,8 @@ class ThumbnailGridView(BasicImagePreviewView):
         canvas_height = self._canvas.winfo_height()
 
         old_thumb_size = self.THUMBNAIL_SIZE
-        self._cols = 8
-        self.THUMBNAIL_SIZE = max(80, (canvas_width - self.MARGIN * 3) // self._cols - self.MARGIN)
+        self._cols = max(1, self._target_cols)
+        self.THUMBNAIL_SIZE = max(60, (canvas_width - self.MARGIN * 3) // self._cols - self.MARGIN)
         size_changed = old_thumb_size != self.THUMBNAIL_SIZE
 
         if size_changed and old_thumb_size != 0:
