@@ -8,6 +8,11 @@ import numpy as np
 import onnxruntime as ort
 
 
+_GPU_PRIORITY = [
+    'DmlExecutionProvider',
+    'CUDAExecutionProvider',
+    'TensorrtExecutionProvider',
+]
 
 class MultiModalEncoder:
     def __init__(
@@ -28,8 +33,8 @@ class MultiModalEncoder:
         self.__normalization = normalization
         self.__context_length = context_length
         self.__tokenizer = FullTokenizer(vocab_path) if vocab_path.exists() else None
-        self.image_session = self._init_onnx_session(image_encoder_path)
-        self.text_session = self._init_onnx_session(text_encoder_path)
+        self.image_session = self._init_onnx_session(image_encoder_path, "图像编码器")
+        self.text_session = self._init_onnx_session(text_encoder_path, "文本编码器")
 
     def tokenize(self, texts) -> np.ndarray:
         if self.__tokenizer is None:
@@ -53,12 +58,35 @@ class MultiModalEncoder:
             result[i, :len(tokens)] = tokens
         return result
 
-    def _init_onnx_session(self, model_path) -> ort.InferenceSession | None:
+    def _init_onnx_session(self, model_path, name: str = "") -> ort.InferenceSession | None:
+        available = ort.get_available_providers()
+        chosen_providers = []
+        chosen_options = []
+
+        for prov in _GPU_PRIORITY:
+            if prov in available:
+                chosen_providers.append(prov)
+                if prov == 'CUDAExecutionProvider':
+                    chosen_options.append({})
+                else:
+                    chosen_options.append({})
+                if name:
+                    print(f"  [{name}] 使用加速设备: {prov}")
+                else:
+                    print(f"  使用加速设备: {prov}")
+
+        chosen_providers.append('CPUExecutionProvider')
+        chosen_options.append({'intra_op_num_threads': 1, 'inter_op_num_threads': 1})
+
+        if not chosen_providers:
+            chosen_providers = ['CPUExecutionProvider']
+            chosen_options = [{'intra_op_num_threads': 1, 'inter_op_num_threads': 1}]
+
         try:
             session = ort.InferenceSession(
                 str(model_path),
-                providers=['CPUExecutionProvider'],
-                provider_options=[{'intra_op_num_threads': 1, 'inter_op_num_threads': 1}]
+                providers=chosen_providers,
+                provider_options=chosen_options
             )
             return session
         except Exception as e:
