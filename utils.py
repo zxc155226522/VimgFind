@@ -1,6 +1,7 @@
 from pathlib import Path
-from queue import Queue
-from threading import Thread
+from queue import Queue, Empty
+from threading import Thread, current_thread
+import threading
 from typing import Callable
 from collections import namedtuple
 import datetime
@@ -44,7 +45,19 @@ class DROPFILES(ctypes.Structure):
 
 
 class Decorator(object):
+    """线程安全的队列流，每个线程独立的 stdout/stderr"""
+    _thread_streams = {}
+    _thread_streams_lock = threading.Lock()
     progress_queue = Queue()
+
+    @classmethod
+    def _get_thread_stream(cls) -> "QueueStream":
+        tid = current_thread().ident
+        with cls._thread_streams_lock:
+            if tid not in cls._thread_streams:
+                cls._thread_streams[tid] = QueueStream(cls.progress_queue)
+            return cls._thread_streams[tid]
+
     @staticmethod
     def send_task(target):# -> _Wrapped[Callable[..., Any], Any, Callable[..., Any], None]:
         @functools.wraps(target)
@@ -63,10 +76,11 @@ class Decorator(object):
         def inner(*args, **kwargs) -> None:
             original_stdout = sys.stdout
             original_stderr = sys.stderr
-            
-            sys.stdout = QueueStream(Decorator.progress_queue)
-            sys.stderr = QueueStream(Decorator.progress_queue)
- 
+
+            thread_stream = Decorator._get_thread_stream()
+            sys.stdout = thread_stream
+            sys.stderr = thread_stream
+
             try:
                 target(*args, **kwargs)
             finally:
@@ -163,11 +177,11 @@ class FileOperation(object):
         dest_path = Path(dest_path)
         if not src_path.exists() or src_path.is_dir() or dest_path.is_dir():
             return False
-        read_mode = 'rb' if is_binary else 'r',
+        read_mode = 'rb' if is_binary else 'r'
         write_mode = 'wb' if is_binary else 'w'
         encoding = None if is_binary else 'utf-8'
         try:
-            with open(src_path, mode=read_mode[0], encoding=encoding) as f_src:
+            with open(src_path, mode=read_mode, encoding=encoding) as f_src:
                 content = f_src.read()
             dest_path = dest_path if inplace else FileOperation.generate_copy_name(dest_path)
             with open(dest_path, mode=write_mode, encoding=encoding) as f_dst:

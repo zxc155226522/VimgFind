@@ -14,6 +14,7 @@ from ui import WinGUI
 from widgets import BasicImagePreviewView, DetailListView, ThumbnailGridView
 from setting import Setting, WinInfo
 from utils import FileOperation, ImageOperation, Decorator, DatabaseBackup
+from utils import Empty
 from search_tools import SearchTool
 import webbrowser
 
@@ -413,22 +414,23 @@ class SearchControl(object):
             view.sort_results(sort_key)
 
     def preview_found_image(self, event: tk.Event) -> None:
-        @Decorator.send_task
-        def _preview() -> None:
-            try:
-                first_item = selection[0]
-                image_path = self.core_control.preview_view.item(first_item)[0]
-                image_obj = ImageOperation.get_image_obj(image_path)
-                if image_obj is not None:
-                    self.core_control.preview_canvas2.append_result(image_path, image_obj)
-            except KeyError:
-                return
         selection = self.core_control.preview_view.selection()
         if not selection:
             return
         if self._preview_timer:
             self.core_control.after_cancel(self._preview_timer)
-        self._preview_timer = self.core_control.after(100, _preview)
+        self._preview_timer = self.core_control.after(100, lambda s=selection: self._do_preview_item(s))
+
+    @Decorator.send_task
+    def _do_preview_item(self, selection: tuple) -> None:
+        try:
+            first_item = selection[0]
+            image_path = self.core_control.preview_view.item(first_item)[0]
+            image_obj = ImageOperation.get_image_obj(image_path)
+            if image_obj is not None:
+                self.core_control.preview_canvas2.append_result(image_path, image_obj)
+        except KeyError:
+            return
 
 
 
@@ -548,7 +550,7 @@ class IndexTableControl(object):
         try:
             while True:
                 last_message = Decorator.progress_queue.get_nowait()
-        except Exception:
+        except Empty:
             pass
         if last_message:
             self.core_control.index_tip_label.config(text=last_message)

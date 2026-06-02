@@ -136,11 +136,16 @@ class NameIndexManager(object):
         self.__name_index_path = name_index_path
         self.__max_match_count = max_match_count
         self.__inverted_index: dict[str, set[int]] = {}
+        self.__existing_paths: set[str] = set()
         self.__init_index()
 
     @property
     def name_index(self) -> list[list]:
         return self.__name_index
+    
+    @property
+    def existing_paths(self) -> set[str]:
+        return self.__existing_paths
     
     @property
     def results_count(self) -> int:
@@ -194,9 +199,11 @@ class NameIndexManager(object):
                 for index_file, metainfo in self.__name_index
             )
         self.__inverted_index.clear()
+        self.__existing_paths.clear()
         for idx, (index_file, _) in enumerate(self.__name_index):
             if index_file == NameIndexManager.NOTEXISTS:
                 continue
+            self.__existing_paths.add(index_file)
             stem = Path(index_file).stem
             for token in self._tokenize(stem):
                 self.__inverted_index.setdefault(token, set()).add(idx)
@@ -205,13 +212,15 @@ class NameIndexManager(object):
         while idx > len(self.__name_index) - 1:
             self.__name_index.append([NameIndexManager.NOTEXISTS, 0])
         was_valid = self.__is_valid_item(*self.__name_index[idx])
-        # 从旧名称的倒排索引移除
+        # 从旧名称的倒排索引和 existing_paths 移除
         old_path = self.__name_index[idx][0]
         if old_path != NameIndexManager.NOTEXISTS:
+            self.__existing_paths.discard(old_path)
             for token in self._tokenize(Path(old_path).stem):
                 if token in self.__inverted_index:
                     self.__inverted_index[token].discard(idx)
         self.__name_index[idx] = [str(name), FileOperation.get_metainfo(name)]
+        self.__existing_paths.add(str(name))
         # 加入新名称的倒排索引
         for token in self._tokenize(Path(name).stem):
             self.__inverted_index.setdefault(token, set()).add(idx)
@@ -222,9 +231,10 @@ class NameIndexManager(object):
         while idx > len(self.__name_index) - 1:
             self.__name_index.append([NameIndexManager.NOTEXISTS, 0])
         was_valid = self.__is_valid_item(*self.__name_index[idx])
-        # 从旧名称的倒排索引移除
+        # 从旧名称的倒排索引和 existing_paths 移除
         old_path = self.__name_index[idx][0]
         if old_path != NameIndexManager.NOTEXISTS:
+            self.__existing_paths.discard(old_path)
             for token in self._tokenize(Path(old_path).stem):
                 if token in self.__inverted_index:
                     self.__inverted_index[token].discard(idx)
@@ -240,6 +250,7 @@ class NameIndexManager(object):
             was_valid = self.__is_valid_item(*self.__name_index[idx])
             old_path = self.__name_index[idx][0]
             if old_path != NameIndexManager.NOTEXISTS:
+                self.__existing_paths.discard(old_path)
                 for token in self._tokenize(Path(old_path).stem):
                     if token in self.__inverted_index:
                         self.__inverted_index[token].discard(idx)

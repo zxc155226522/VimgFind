@@ -89,7 +89,7 @@ class SearchTool(object):
     def __get_new_files_index(self, target_dir: str) -> list[tuple[int, str]]:
         new_files_index = []
         current_files, total_files = FileOperation.get_file_iterator(target_dir)
-        existing_files = set(i[0] for i in self.__name_idx_mgr.name_index)
+        existing_files = self.__name_idx_mgr.existing_paths
         new_files = []
         scanned_count = 0
         scan_start_time = time.time()

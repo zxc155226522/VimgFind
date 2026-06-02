@@ -248,7 +248,7 @@ class WinGUI(TkinterDnD.Tk):
         return checkbtn
 
     def __set_update_threads_count_scale(self, parent) -> Scale:
-        tip = Label(parent, text=f"更新线程：$$")
+        tip = Label(parent, text=f"更新线程：04")
         tip.grid(row=3, column=1, padx=(5, 10), sticky=tk.E)
         scale = Scale(parent, from_=4, to=20, orient=tk.HORIZONTAL)
         scale.grid(row=3, column=2, padx=(0, 5), sticky=tk.EW)
