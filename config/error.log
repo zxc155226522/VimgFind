@@ -8,3 +8,22 @@
 2026-05-25 18:08:36,526 -  加载图片失败，已跳过 E:\MaterialSearchWindows - 汇志\汇志png\MINO熊猫笑脸-绿色帽子-黑色.png: cannot identify image file 'E:\\MaterialSearchWindows - 汇志\\汇志png\\MINO熊猫笑脸-绿色帽子-黑色.png'
 2026-05-26 18:51:37,775 -  加载图片失败，已跳过 Z:\2026打版\5-26\雅恩\JXG63103-烫画工艺单.tif: cannot identify image file 'Z:\\2026打版\\5-26\\雅恩\\JXG63103-烫画工艺单.tif'
 2026-05-26 21:28:59,326 -  加载图片失败，已跳过 ### 1. UI 布局调整 (ui.py)
+2026-05-27 11:03:49,506 -  加载图片失败，已跳过 E:\MaterialSearchWindows - 汇志\汇志png\JX58-177-LIKETOUQHGETAHELMET-白色-28CMX13CM.png: cannot identify image file 'E:\\MaterialSearchWindows - 汇志\\汇志png\\JX58-177-LIKETOUQHGETAHELMET-白色-28CMX13CM.png'
+2026-05-27 21:04:30,641 -  加载图片失败，已跳过 E:\MaterialSearchWindows - 汇志\汇志png\MINO熊猫笑脸-绿色帽子-黑色.png: cannot identify image file 'E:\\MaterialSearchWindows - 汇志\\汇志png\\MINO熊猫笑脸-绿色帽子-黑色.png'
+2026-05-28 15:17:33,870 -  搜索时发生异常: invalid command name ".!notebook.!frame.!frame2.!canvas"
+2026-05-29 11:09:34,013 -  加载图片失败，已跳过 E:\MaterialSearchWindows - 汇志\汇志png\MINO熊猫笑脸-绿色帽子-黑色.png: cannot identify image file 'E:\\MaterialSearchWindows - 汇志\\汇志png\\MINO熊猫笑脸-绿色帽子-黑色.png'
+2026-05-29 11:09:40,872 -  加载图片失败，已跳过 E:\MaterialSearchWindows - 汇志\汇志png\MINO熊猫笑脸-绿色帽子-黑色.png: cannot identify image file 'E:\\MaterialSearchWindows - 汇志\\汇志png\\MINO熊猫笑脸-绿色帽子-黑色.png'
+2026-05-29 11:09:41,538 -  加载图片失败，已跳过 E:\MaterialSearchWindows - 汇志\汇志png\MINO熊猫笑脸-绿色帽子-黑色.png: cannot identify image file 'E:\\MaterialSearchWindows - 汇志\\汇志png\\MINO熊猫笑脸-绿色帽子-黑色.png'
+2026-05-29 11:10:23,207 -  加载图片失败，已跳过 E:\MaterialSearchWindows - 汇志\汇志png\MINO熊猫笑脸-绿色帽子-黑色.png: cannot identify image file 'E:\\MaterialSearchWindows - 汇志\\汇志png\\MINO熊猫笑脸-绿色帽子-黑色.png'
+2026-05-29 11:31:11,473 -  搜索时发生异常: invalid command name ".!notebook.!frame.!frame2.!canvas"
+2026-05-29 17:58:18,056 -  搜索时发生异常: invalid command name ".!notebook.!frame.!frame2.!canvas"
+Traceback (most recent call last):
+  File "control.py", line 343, in __search_image
+    self.core_control.preview_view.append_result(img_path, *extra_info)
+  File "widgets.py", line 1021, in append_result
+    self._create_placeholder(item)
+  File "widgets.py", line 650, in _create_placeholder
+    self._canvas.tag_bind(image_info_id, "<ButtonPress-1>", lambda e, it=item: self._on_filename_drag_start(e, it))
+  File "tkinter\__init__.py", line 2775, in tag_bind
+  File "tkinter\__init__.py", line 1375, in _bind
+_tkinter.TclError: invalid command name ".!notebook.!frame.!frame2.!canvas"

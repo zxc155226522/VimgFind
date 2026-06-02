@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Literal, Callable
 import json
 import logging
+import re
 
 import numpy as np
 try:
@@ -134,6 +135,7 @@ class NameIndexManager(object):
     def __init__(self, name_index_path: Path, max_match_count: int) -> None:
         self.__name_index_path = name_index_path
         self.__max_match_count = max_match_count
+        self.__inverted_index: dict[str, set[int]] = {}
         self.__init_index()
 
     @property
@@ -150,6 +152,19 @@ class NameIndexManager(object):
     
     def update_max_match_count(self, max_match_count: int) -> None:
         self.__max_match_count = max_match_count
+
+    @staticmethod
+    def _tokenize(text: str) -> set[str]:
+        parts = re.split(r'[\s\-_\.\(\)\[\]\{\}]+', text.lower())
+        tokens: set[str] = set()
+        for part in parts:
+            if not part:
+                continue
+            tokens.add(part)
+            for ch in part:
+                if '\u4e00' <= ch <= '\u9fff':
+                    tokens.add(ch)
+        return tokens
 
     @staticmethod
     def is_skipped_metainfo(metainfo) -> bool:
@@ -178,12 +193,28 @@ class NameIndexManager(object):
                 self.__is_valid_item(index_file, metainfo)
                 for index_file, metainfo in self.__name_index
             )
+        self.__inverted_index.clear()
+        for idx, (index_file, _) in enumerate(self.__name_index):
+            if index_file == NameIndexManager.NOTEXISTS:
+                continue
+            stem = Path(index_file).stem
+            for token in self._tokenize(stem):
+                self.__inverted_index.setdefault(token, set()).add(idx)
     
     def add_name(self, name: Path | str, idx: int) -> None:
         while idx > len(self.__name_index) - 1:
             self.__name_index.append([NameIndexManager.NOTEXISTS, 0])
         was_valid = self.__is_valid_item(*self.__name_index[idx])
+        # 从旧名称的倒排索引移除
+        old_path = self.__name_index[idx][0]
+        if old_path != NameIndexManager.NOTEXISTS:
+            for token in self._tokenize(Path(old_path).stem):
+                if token in self.__inverted_index:
+                    self.__inverted_index[token].discard(idx)
         self.__name_index[idx] = [str(name), FileOperation.get_metainfo(name)]
+        # 加入新名称的倒排索引
+        for token in self._tokenize(Path(name).stem):
+            self.__inverted_index.setdefault(token, set()).add(idx)
         if not was_valid:
             self.__valid_index_count += 1
 
@@ -191,6 +222,12 @@ class NameIndexManager(object):
         while idx > len(self.__name_index) - 1:
             self.__name_index.append([NameIndexManager.NOTEXISTS, 0])
         was_valid = self.__is_valid_item(*self.__name_index[idx])
+        # 从旧名称的倒排索引移除
+        old_path = self.__name_index[idx][0]
+        if old_path != NameIndexManager.NOTEXISTS:
+            for token in self._tokenize(Path(old_path).stem):
+                if token in self.__inverted_index:
+                    self.__inverted_index[token].discard(idx)
         self.__name_index[idx] = [
             str(name),
             {"size": FileOperation.get_metainfo(name), self.SKIPPED_META_KEY: True}
@@ -201,11 +238,42 @@ class NameIndexManager(object):
     def delete_name(self, idx: int) -> None:
         try:
             was_valid = self.__is_valid_item(*self.__name_index[idx])
+            old_path = self.__name_index[idx][0]
+            if old_path != NameIndexManager.NOTEXISTS:
+                for token in self._tokenize(Path(old_path).stem):
+                    if token in self.__inverted_index:
+                        self.__inverted_index[token].discard(idx)
             self.__name_index[idx][0] = NameIndexManager.NOTEXISTS
             if was_valid:
                 self.__valid_index_count -= 1
         except IndexError:
             pass
+
+    def search_by_name(self, query: str, max_results: int) -> list[tuple[int, str]]:
+        query_lower = query.lower()
+        query_tokens = self._tokenize(query_lower)
+        if not query_tokens:
+            return []
+        # 用第一个 token 获取候选集，再用后续 token 取交集
+        it = iter(query_tokens)
+        candidates = set(self.__inverted_index.get(next(it), set()))
+        for token in it:
+            candidates &= self.__inverted_index.get(token, set())
+            if not candidates:
+                return []
+        if not candidates:
+            return []
+        results = []
+        for idx in candidates:
+            path = self.__name_index[idx][0]
+            if path == NameIndexManager.NOTEXISTS:
+                continue
+            name = Path(path).stem.lower()
+            if query_lower in name:
+                results.append((idx, path))
+                if len(results) >= max_results:
+                    break
+        return results
 
     def reset_index(self) -> None:
         FileOperation.delete_file(self.__name_index_path)

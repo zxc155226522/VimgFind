@@ -67,6 +67,9 @@ class BasicImagePreviewView(object):
     def bind(self, sequence: str, func: Callable) -> None:
         pass
 
+    def set_search_text(self, text: str) -> None:
+        pass
+
     def destroy(self) -> None:
         pass
 
@@ -77,32 +80,146 @@ class PreviewCanvasView(BasicImagePreviewView):
         super().__init__(parent)
         self._canvas = self._create_canvas(parent)
         self._tooltip = tooltip.ToolTip(self._canvas, text="没有文件", delay=500)
+        self._original_image: Image.Image | None = None
+        self._scale = 1.0
+        self._offset_x = 0
+        self._offset_y = 0
+        self._drag_start_x = 0
+        self._drag_start_y = 0
+        self._zoom_text_id: int | None = None
+        self._zoom_text_timer = ""
+        self._bind_zoom_events()
 
     def _create_canvas(self, parent) -> tk.Canvas:
         canvas = tk.Canvas(parent, highlightthickness=0, cursor="hand2")
         canvas.place(relx=0, rely=0, relwidth=1, relheight=1)
         return canvas
 
+    def _bind_zoom_events(self) -> None:
+        self._canvas.bind("<MouseWheel>", self._on_zoom)
+        self._canvas.bind("<Button-4>", self._on_zoom)
+        self._canvas.bind("<Button-5>", self._on_zoom)
+        self._canvas.bind("<ButtonPress-1>", self._on_drag_start, add="+")
+        self._canvas.bind("<B1-Motion>", self._on_drag_move, add="+")
+        self._canvas.bind("<ButtonRelease-1>", self._on_drag_end, add="+")
+        self._canvas.bind("<Double-Button-1>", self._on_reset_zoom)
+
+    def _on_zoom(self, event: tk.Event) -> None:
+        if self._original_image is None:
+            return
+        if event.delta:
+            delta = 1.1 if event.delta > 0 else 1 / 1.1
+        elif event.num == 4:
+            delta = 1.1
+        elif event.num == 5:
+            delta = 1 / 1.1
+        else:
+            return
+
+        new_scale = self._scale * delta
+        if new_scale < 0.1 or new_scale > 5.0:
+            return
+
+        cx = self._canvas.canvasx(event.x) - self._canvas.winfo_width() // 2
+        cy = self._canvas.canvasy(event.y) - self._canvas.winfo_height() // 2
+
+        self._offset_x = int(cx - (cx - self._offset_x) * delta)
+        self._offset_y = int(cy - (cy - self._offset_y) * delta)
+        self._scale = new_scale
+        self._redraw()
+
+    def _on_drag_start(self, event: tk.Event) -> None:
+        if self._original_image is not None:
+            self._drag_start_x = event.x
+            self._drag_start_y = event.y
+
+    def _on_drag_move(self, event: tk.Event) -> None:
+        if self._original_image is None:
+            return
+        dx = event.x - self._drag_start_x
+        dy = event.y - self._drag_start_y
+        self._drag_start_x = event.x
+        self._drag_start_y = event.y
+        self._offset_x += dx
+        self._offset_y += dy
+        self._redraw()
+
+    def _on_drag_end(self, event: tk.Event) -> None:
+        pass
+
+    def _on_reset_zoom(self, event: tk.Event) -> None:
+        if self._original_image is not None:
+            self._scale = 1.0
+            self._offset_x = 0
+            self._offset_y = 0
+            self._redraw()
+
+    def _redraw(self) -> None:
+        if self._original_image is None:
+            return
+        canvas_w = max(self._canvas.winfo_width(), 100)
+        canvas_h = max(self._canvas.winfo_height(), 80)
+        img_w, img_h = self._original_image.size
+        fit_scale = min(canvas_w / img_w, canvas_h / img_h)
+        scaled_w = max(1, int(img_w * fit_scale * self._scale))
+        scaled_h = max(1, int(img_h * fit_scale * self._scale))
+
+        resized = self._original_image.resize((scaled_w, scaled_h), Image.Resampling.BICUBIC)
+        imgtk = ImageTk.PhotoImage(resized)
+
+        self._canvas.delete(tk.ALL)
+        cx = canvas_w // 2 + self._offset_x
+        cy = canvas_h // 2 + self._offset_y
+        self._canvas.create_image(cx, cy, anchor=tk.CENTER, image=imgtk)
+
+        if self._scale != 1.0:
+            self._zoom_text_id = self._canvas.create_text(
+                10, 10, anchor=tk.NW,
+                text=f"{int(self._scale * 100)}%",
+                fill="white",
+                font=("微软雅黑", 10, "bold")
+            )
+            self._schedule_hide_zoom_text()
+        elif self._zoom_text_id is not None:
+            self._zoom_text_id = None
+
+        for iid in list(self._results.keys()):
+            self._results[iid] = (self._results[iid][0], imgtk)
+
+    def _schedule_hide_zoom_text(self) -> None:
+        if self._zoom_text_timer:
+            self.parent.after_cancel(self._zoom_text_timer)
+        self._zoom_text_timer = self.parent.after(1500, self._hide_zoom_text)
+
+    def _hide_zoom_text(self) -> None:
+        if self._zoom_text_id is not None:
+            self._canvas.delete(self._zoom_text_id)
+            self._zoom_text_id = None
+        self._zoom_text_timer = ""
+
     def append_result(self, image_path: str, image_obj: Image.Image) -> str:
         iid = self._generate_unique_path_item(image_path)
-        canvas_width = max(self._canvas.winfo_width(), 100)
-        canvas_height = max(self._canvas.winfo_height(), 80)
-        x = canvas_width // 2
-        y = canvas_height // 2
         try:
             img: Image.Image = ImageOps.exif_transpose(image_obj)
-            img.thumbnail((canvas_width, canvas_height), Image.Resampling.BICUBIC)
-            imgtk = ImageTk.PhotoImage(img)
         except UnidentifiedImageError:
             return ""
         self.clear_results()
-        self._results[iid] = (image_path, imgtk)
-        self._canvas.create_image(x, y, anchor=tk.CENTER, image=imgtk)
+        self._original_image = img
+        self._scale = 1.0
+        self._offset_x = 0
+        self._offset_y = 0
+        self._results[iid] = (image_path, None)
         self._tooltip.text = image_path
+        self._redraw()
         return iid
     
     def clear_results(self) -> None:
         self._results.clear()
+        self._original_image = None
+        self._scale = 1.0
+        self._offset_x = 0
+        self._offset_y = 0
+        self._zoom_text_id = None
         self._canvas.delete(tk.ALL)
         self._tooltip.text = "没有文件"
 
@@ -117,19 +234,27 @@ class PreviewCanvasView(BasicImagePreviewView):
 
     def destroy(self) -> None:
         self._results.clear()
+        self._original_image = None
+        if self._zoom_text_timer:
+            self.parent.after_cancel(self._zoom_text_timer)
         self._canvas.destroy()
 
 
 
 class DetailListView(BasicImagePreviewView):
+    THUMB_SIZE = 40
+
     def __init__(self, parent: tk.Widget, extra_columns: dict[str, int]) -> None:
         super().__init__(parent)
+        self._thumbnail_cache: dict[str, ImageTk.PhotoImage] = {}
         self._create_treeview(extra_columns)
         self.parent.after(50, self._create_scrollbar)
         
     def _create_treeview(self, extra_columns: dict[str, int]) -> None:
         columns = {"名称":160, **extra_columns}
-        self.__treeview = Treeview(self.parent, show="headings", columns=list(columns))
+        self.__treeview = Treeview(self.parent, show="tree headings", columns=list(columns))
+        self.__treeview.heading("#0", text="")
+        self.__treeview.column("#0", width=self.THUMB_SIZE + 10, anchor='center', stretch=False, minwidth=self.THUMB_SIZE + 10)
         for text, width in columns.items():
             self.__treeview.heading(text, text=text, anchor='center')
             self.__treeview.column(text, anchor='center', width=width, stretch=True)
@@ -161,10 +286,31 @@ class DetailListView(BasicImagePreviewView):
         iid = self._generate_unique_path_item(image_path)
         content = (os.path.basename(image_path), *extra_info)
         self._results[iid] = (image_path, *extra_info)
-        return self.__treeview.insert('', tk.END, values=content, iid=iid, text=image_path)
+        tree_iid = self.__treeview.insert('', tk.END, values=content, iid=iid, text="")
+        self._load_thumbnail_async(image_path, iid)
+        return tree_iid
+
+    def _load_thumbnail_async(self, image_path: str, iid: str) -> None:
+        def _do_load() -> None:
+            try:
+                img = Image.open(image_path)
+                img.thumbnail((self.THUMB_SIZE, self.THUMB_SIZE))
+                img = ImageOps.exif_transpose(img)
+                photo = ImageTk.PhotoImage(img)
+                self._thumbnail_cache[iid] = photo
+                self.parent.after(0, lambda: self._set_thumbnail(iid, photo))
+            except Exception:
+                pass
+        import threading
+        threading.Thread(target=_do_load, daemon=True).start()
+
+    def _set_thumbnail(self, iid: str, photo: ImageTk.PhotoImage) -> None:
+        if self.__treeview.exists(iid):
+            self.__treeview.item(iid, image=photo)
             
     def clear_results(self) -> None:
         self._results.clear()
+        self._thumbnail_cache.clear()
         self.__treeview.delete(*self.__treeview.get_children())
     
     def selection(self) -> tuple[str, ...]:
@@ -198,6 +344,7 @@ class ThumbnailGridView(BasicImagePreviewView):
     """
     THUMBNAIL_SIZE: int = WinInfo.TkS(110)
     MARGIN: int = WinInfo.TkS(10)
+    H_GAP: int = WinInfo.TkS(16)
     FONT_HEGIHT: int = WinInfo.TkS(32)
     BUTTON_HEIGHT: int = WinInfo.TkS(30)
     BUTTON_GAP: int = WinInfo.TkS(4)
@@ -221,10 +368,13 @@ class ThumbnailGridView(BasicImagePreviewView):
         self.copy_image_callback: Callable[[Path], None] | None = None
         self.copy_path_callback: Callable[[Path], None] | None = None
         self.open_ps_callback: Callable[[Path], None] | None = None
+        self._search_text: str = ""
+        self._highlight_color: str = "#FFD700"
         
         # 定时器
         self._scroll_timer = ""
         self._scrollbar_drag_timer = ""
+        self._check_timer = ""
 
         self._cols = 0
         self._target_cols = 8
@@ -280,7 +430,10 @@ class ThumbnailGridView(BasicImagePreviewView):
         for item_id in self._canvas.find_all():
             tags = self._canvas.gettags(item_id)
             if self._canvas.type(item_id) == "text":
-                self._canvas.itemconfig(item_id, fill=self.theme_color.fg)
+                if "search_highlight" in tags:
+                    self._canvas.itemconfig(item_id, fill=self._highlight_color)
+                else:
+                    self._canvas.itemconfig(item_id, fill=self.theme_color.fg)
             elif self._canvas.type(item_id) == "rectangle":
                 if any(tag.startswith("action:") for tag in tags):
                     self._canvas.itemconfig(item_id, fill=self.theme_color.inputbg, outline=self.theme_color.primary)
@@ -459,14 +612,15 @@ class ThumbnailGridView(BasicImagePreviewView):
             self._visible_image_data[item] = {'photo': result.photo, 'size': result.size, 'error': result.error}
             if item in self._canvas_items:
                 self._create_canvas_item(item)
-        self.parent.after(100, self._check_results)
+        self._check_timer = self.parent.after(100, self._check_results)
 
     def _cancel_timer(self) -> None:
         if self._scroll_timer:
             self.parent.after_cancel(self._scroll_timer)
-        
         if self._scrollbar_drag_timer:
             self.parent.after_cancel(self._scrollbar_drag_timer)
+        if self._check_timer:
+            self.parent.after_cancel(self._check_timer)
 
 # 分割线------------------------------------------------------------------------------------------------
 
@@ -480,16 +634,23 @@ class ThumbnailGridView(BasicImagePreviewView):
     def _create_placeholder(self, item: str) -> None:
         x, y = self._get_item_position(item)
         filename = os.path.basename(self._results[item][0])
-        truncate_filename = FileOperation.truncate_filename(filename)
         placeholder_id = self._canvas.create_text(
             x + self.THUMBNAIL_SIZE // 2, y + self.THUMBNAIL_SIZE // 2,
             text=f"图片加载中...", fill=self.theme_color.fg
         )
+        text_fill = self._highlight_color if self._search_text and self._search_text.lower() in filename.lower() else self.theme_color.fg
+        text_tags = ("filename_text", "copy_filename", f"item:{item}")
+        if self._search_text and self._search_text.lower() in filename.lower():
+            text_tags += ("search_highlight",)
         image_info_id = self._canvas.create_text(
             x + self.THUMBNAIL_SIZE // 2, 
             y + self.THUMBNAIL_SIZE + self.MARGIN // 2 + self.FONT_HEGIHT // 2,
-            text=truncate_filename, fill=self.theme_color.fg
+            text=filename, fill=text_fill, tags=text_tags
         )
+        self._canvas.tag_bind(image_info_id, "<ButtonPress-1>", lambda e, it=item: self._on_filename_drag_start(e, it))
+        self._canvas.tag_bind(image_info_id, "<ButtonRelease-1>", lambda e, it=item: self._on_filename_drag_end(e, it))
+        self._canvas.tag_bind(image_info_id, "<Enter>", lambda e: self._canvas.config(cursor="hand2"))
+        self._canvas.tag_bind(image_info_id, "<Leave>", lambda e: self._canvas.config(cursor=""))
         self._canvas_items[item] = {
             "placeholder_id": placeholder_id, 
             "image_info_id": image_info_id,
@@ -509,11 +670,14 @@ class ThumbnailGridView(BasicImagePreviewView):
         
         self._canvas.delete(canvas_item["placeholder_id"])
 
-        filename = FileOperation.truncate_filename(self._results[item][0])
+        filename = os.path.basename(self._results[item][0])
         width, height = image_data["size"]
         
         tip_info = f"{filename}\n{width} × {height}"
-        self._canvas.itemconfig(canvas_item["image_info_id"], text=tip_info)
+        text_fill = self._highlight_color if self._search_text and self._search_text.lower() in filename.lower() else self.theme_color.fg
+        self._canvas.itemconfig(canvas_item["image_info_id"], text=tip_info, fill=text_fill)
+        if self._search_text and self._search_text.lower() in filename.lower():
+            self._canvas.itemconfig(canvas_item["image_info_id"], tags=("filename_text", "copy_filename", f"item:{item}", "search_highlight"))
         
         if image_data['photo'] is not None:
             if "image_id" not in canvas_item:
@@ -588,6 +752,44 @@ class ThumbnailGridView(BasicImagePreviewView):
             return
         rect_tag = f"action_rect:{action}:{item}"
         self._canvas.itemconfig(rect_tag, fill=self.theme_color.primary)
+
+    def _on_filename_drag_start(self, event: tk.Event, item: str) -> None:
+        self._filename_drag_item = item
+
+    def _on_filename_drag_end(self, event: tk.Event, item: str) -> None:
+        if getattr(self, '_filename_drag_item', '') == item:
+            self._copy_filename_to_clipboard(item)
+            self._filename_drag_item = ''
+
+    def _copy_filename_to_clipboard(self, item: str) -> None:
+        if item not in self._results:
+            return
+        file_path = self._results[item][0]
+        self._canvas.clipboard_clear()
+        self._canvas.clipboard_append(file_path)
+        self._show_copy_tooltip(item)
+
+    def _show_copy_tooltip(self, item: str) -> None:
+        if item not in self._canvas_items:
+            return
+        x, y = self._get_item_position(item)
+        tip_x = x + self.THUMBNAIL_SIZE // 2
+        tip_y = y + self.THUMBNAIL_SIZE + self.MARGIN // 2 + self.FONT_HEGIHT + 20
+        tooltip_id = self._canvas.create_text(
+            tip_x, tip_y, text="已复制", fill="white",
+            font=("微软雅黑", 9)
+        )
+        bbox = self._canvas.bbox(tooltip_id)
+        if bbox:
+            bg_id = self._canvas.create_rectangle(
+                bbox[0] - 4, bbox[1] - 2, bbox[2] + 4, bbox[3] + 2,
+                fill=self.theme_color.primary, outline=""
+            )
+            self._canvas.tag_lower(bg_id, tooltip_id)
+        self.parent.after(1200, lambda tid=tooltip_id, bid=bg_id if bbox else None: (
+            self._canvas.delete(tid),
+            bid is not None and self._canvas.delete(bid)
+        ))
 
     def _create_action_buttons(self, item: str) -> None:
         if item not in self._canvas_items:
@@ -675,7 +877,7 @@ class ThumbnailGridView(BasicImagePreviewView):
 
         old_thumb_size = self.THUMBNAIL_SIZE
         self._cols = max(1, self._target_cols)
-        self.THUMBNAIL_SIZE = max(60, (canvas_width - self.MARGIN * 3) // self._cols - self.MARGIN)
+        self.THUMBNAIL_SIZE = max(60, (canvas_width - self.H_GAP * (self._cols - 1) - self.MARGIN * 3 // 2) // self._cols)
         size_changed = old_thumb_size != self.THUMBNAIL_SIZE
 
         if size_changed and old_thumb_size != 0:
@@ -714,7 +916,7 @@ class ThumbnailGridView(BasicImagePreviewView):
         row = index // self._cols
         col = index % self._cols
         
-        item_width = self.THUMBNAIL_SIZE + self.MARGIN
+        item_width = self.THUMBNAIL_SIZE + self.H_GAP
         item_height = self.THUMBNAIL_SIZE + self.MARGIN + self.FONT_HEGIHT + self.BUTTON_HEIGHT + self.BUTTON_GAP
         
         x = col * item_width + self.MARGIN + self.MARGIN // 2
@@ -723,7 +925,7 @@ class ThumbnailGridView(BasicImagePreviewView):
         return (x, y)        
     
     def _load_visible_images(self) -> None:
-        if not self._results or self._cols == 0:
+        if self._is_destroy or not self._results or self._cols == 0:
             return
         
         canvas_y1 = self._canvas.canvasy(0)
@@ -746,6 +948,71 @@ class ThumbnailGridView(BasicImagePreviewView):
         self._visible_items = new_visible_items
 
 # 对外接口--------------------------------------------------------------------------------------------
+
+    def set_search_text(self, text: str) -> None:
+        self._search_text = text
+
+    def sort_results(self, sort_key: str) -> None:
+        if not self._results:
+            return
+
+        sort_map = {
+            "相似度": (2, True),
+            "文件名": (-1, False),
+            "大小": (0, True),
+            "修改时间": (1, True),
+        }
+        if sort_key not in sort_map:
+            return
+
+        col, reverse = sort_map[sort_key]
+        if col == -1:
+            sorted_items = sorted(
+                self._results.items(),
+                key=lambda x: Path(x[1][0]).stem.lower(),
+                reverse=reverse
+            )
+        elif col == 0:
+            sorted_items = sorted(
+                self._results.items(),
+                key=lambda x: x[1][col].rstrip("MB"),
+                reverse=reverse
+            )
+        elif col == 2:
+            sorted_items = sorted(
+                self._results.items(),
+                key=lambda x: x[1][col].rstrip("%"),
+                reverse=reverse
+            )
+        else:
+            sorted_items = sorted(
+                self._results.items(),
+                key=lambda x: x[1][col],
+                reverse=reverse
+            )
+
+        self._results = OrderedDict(sorted_items)
+        # 保存旧选中
+        old_selection = set(self._selected_items)
+        # 清理并重建
+        self._cancel_timer()
+        self._visible_image_data.clear()
+        self._canvas.delete(tk.ALL)
+        self._canvas_items.clear()
+        self._visible_items.clear()
+        self._selected_items.clear()
+        self._button_areas.clear()
+        self._hovered_button = None
+        self._update_layout()
+        # 重建占位并恢复选中
+        for item in self._results:
+            self._create_placeholder(item)
+        for item in old_selection:
+            if item in self._results:
+                self._selected_items.add(item)
+                self._set_item_selected(item, True)
+        self.parent.after(100, self._load_visible_images)
+        self._canvas.event_generate("<<ItemviewSelect>>")
 
     def append_result(self, image_path: str, *extra_info: str | int) -> str:
         item = self._generate_unique_path_item(image_path)

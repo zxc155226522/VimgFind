@@ -88,24 +88,25 @@ class SearchTool(object):
     
     def __get_new_files_index(self, target_dir: str) -> list[tuple[int, str]]:
         new_files_index = []
-        current_files = FileOperation.get_file_iterator(target_dir)
+        current_files, total_files = FileOperation.get_file_iterator(target_dir)
         existing_files = set(i[0] for i in self.__name_idx_mgr.name_index)
         new_files = []
         scanned_count = 0
         scan_start_time = time.time()
         last_report_time = 0.0
-        print(f"扫描文件：{target_dir}")
+        print(f"扫描文件：{target_dir}（共 {total_files} 个）")
         for file in current_files:
             scanned_count += 1
             if file not in existing_files:
                 new_files.append(file)
             now = time.time()
             if scanned_count % 200 == 0 or now - last_report_time >= 1:
-                print(f"扫描文件：{scanned_count}个 | 新增 {len(new_files)}个 | 耗时 {_format_duration(now - scan_start_time)}")
+                filename = Path(file).name
+                print(f"扫描：{scanned_count}/{total_files} | {filename} | 新增 {len(new_files)}个")
                 last_report_time = now
             if self.__force_stop_update:
                 break
-        print(f"扫描完成：{scanned_count}个 | 新增 {len(new_files)}个 | 耗时 {_format_duration(time.time() - scan_start_time)}")
+        print(f"扫描完成：{scanned_count}/{total_files}个 | 新增 {len(new_files)}个 | 耗时 {_format_duration(time.time() - scan_start_time)}")
 
         if not new_files:
             return []
@@ -237,22 +238,13 @@ class SearchTool(object):
         self.continue_update_index()
 
     def checkout_by_name(self, query: str) -> Iterator[tuple[str, float]]:
-        """按文件名搜索"""
+        """按文件名搜索（使用倒排索引加速）"""
         self.__init_event.wait()
         if not query:
             return
-        results_count = self.__name_idx_mgr.results_count
-        query_lower = query.lower()
-        yielded = 0
-        for path, _ in self.__name_idx_mgr.name_index:
-            if path == NameIndexManager.NOTEXISTS:
-                continue
-            name = Path(path).stem.lower()
-            if query_lower in name:
-                yield (path, 100.0)
-                yielded += 1
-                if yielded >= results_count:
-                    break
+        results = self.__name_idx_mgr.search_by_name(query, self.__name_idx_mgr.results_count)
+        for _, path in results:
+            yield (path, 100.0)
 
     def is_empty_index(self) -> bool:
         return self.__name_idx_mgr.results_count == 0

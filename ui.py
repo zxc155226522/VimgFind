@@ -1,4 +1,4 @@
-from ttkbootstrap import Button, Entry, Checkbutton, Scale, Style
+from ttkbootstrap import Button, Entry, Checkbutton, Radiobutton, Scale, Style, Progressbar
 from ttkbootstrap.constants import LINK
 from tkinter.ttk import (
     Notebook, Frame, Treeview, Label, LabelFrame, Combobox
@@ -39,11 +39,15 @@ class WinGUI(TkinterDnD.Tk):
         self.update_index_button = self.__set_update_index_button(self.index_setting_frame)
         self.delete_index_button = self.__set_delete_index_button(self.index_setting_frame)
         self.rebuild_index_button = self.__set_rebuild_index_button(self.index_setting_frame)
+        self.index_progress_bar = self.__set_index_progress_bar(self.index_setting_frame)
+        self.index_progress_label = self.__set_index_progress_label(self.index_setting_frame)
         self.theme_combobox = self.__set_theme_combobox(self.common_setting_frame)
         self.auto_update_btn = self.__set_auto_update_checkbutton(self.common_setting_frame)
         self.update_threads_count_scale = self.__set_update_threads_count_scale(self.common_setting_frame)
         self.open_setting_file_button = self.__set_open_setting_btn(self.common_setting_frame)
         self.open_repertory_button = self.__set_open_open_repertory_btn(self.common_setting_frame)
+        self.backup_button = self.__set_backup_button(self.common_setting_frame)
+        self.restore_button = self.__set_restore_button(self.common_setting_frame)
 
     def _set_dpi_awareness(self) -> None:
         try:
@@ -80,27 +84,27 @@ class WinGUI(TkinterDnD.Tk):
     
     def __set_search_entry(self, parent) -> Entry:
         ipt = Entry(parent)
-        ipt.place(relx=0.01, rely=0.02, relwidth=0.275, relheight=0.0690)
+        ipt.place(relx=0.004, rely=0.008, relwidth=0.275, relheight=0.038)
         return ipt
 
     def __set_search_button(self, parent) -> Button:
         btn = Button(parent, text="搜索", takefocus=False, bootstyle="primary")
-        btn.place(relx=0.295, rely=0.0192, relwidth=0.08, relheight=0.0690)
+        btn.place(relx=0.295, rely=0.007, relwidth=0.08, relheight=0.038)
         return btn
 
     def __set_search_by_browser_button(self, parent) -> Button:
         btn = Button(parent, text="浏览", takefocus=False,)
-        btn.place(relx=0.385, rely=0.0192, relwidth=0.1, relheight=0.0690)
+        btn.place(relx=0.385, rely=0.007, relwidth=0.1, relheight=0.038)
         return btn
     
     def __set_search_by_clipboard_button(self, parent) -> Button:
         btn = Button(parent, text="剪切板", takefocus=False,)
-        btn.place(relx=0.495, rely=0.0192, relwidth=0.1, relheight=0.0690)
+        btn.place(relx=0.495, rely=0.007, relwidth=0.1, relheight=0.038)
         return btn
     
     def __set_search_setting_bar(self, parent) -> Frame:
         bar = Frame(parent)
-        bar.place(relx=0.01, rely=0.095, relwidth=0.6170, relheight=0.04)
+        bar.place(relx=0.004, rely=0.05, relwidth=0.6170, relheight=0.04)
 
         # 预览模式切换按钮
         self.preview_detail_btn = Button(bar, text="详情", takefocus=False, bootstyle="outline-toolbutton")
@@ -115,25 +119,37 @@ class WinGUI(TkinterDnD.Tk):
 
         self.similarity_scale = Scale(bar, from_=0, to=100, orient=tk.HORIZONTAL, takefocus=False)
         self.similarity_scale.set(0)
-        self.similarity_scale.place(relx=0.36, rely=0.15, relwidth=0.28, relheight=0.7)
+        self.similarity_scale.place(relx=0.36, rely=0.15, relwidth=0.20, relheight=0.7)
+
+        # 排序
+        self.sort_label = Label(bar, text="排序:")
+        self.sort_label.place(relx=0.57, rely=0.2, relwidth=0.05, relheight=0.6)
+
+        self.sort_combo = Combobox(bar, values=("相似度", "文件名", "大小", "修改时间"), state="readonly", width=8)
+        self.sort_combo.place(relx=0.62, rely=0.15, relwidth=0.10, relheight=0.7)
 
         # 显示数量
         self.result_count_label = Label(bar, text="数量:")
-        self.result_count_label.place(relx=0.66, rely=0.2, relwidth=0.06, relheight=0.6)
+        self.result_count_label.place(relx=0.73, rely=0.2, relwidth=0.04, relheight=0.6)
 
         self.result_count_entry = Entry(bar)
         self.result_count_entry.insert(0, "300")
-        self.result_count_entry.place(relx=0.72, rely=0.15, relwidth=0.08, relheight=0.7)
+        self.result_count_entry.place(relx=0.77, rely=0.15, relwidth=0.06, relheight=0.7)
 
-        # 搜索模式切换
-        self.search_mode_btn = Button(bar, text="文件名搜索", takefocus=False, bootstyle="outline-toolbutton")
-        self.search_mode_btn.place(relx=0.84, rely=0.1, relwidth=0.16, relheight=0.8)
+        # 搜索模式切换（单选框）
+        self._search_mode_var = tk.BooleanVar(value=True)
+        self.search_mode_name_rb = Radiobutton(bar, text="文件名", variable=self._search_mode_var,
+                                                value=True, takefocus=False)
+        self.search_mode_name_rb.place(relx=0.85, rely=0.1, relwidth=0.07, relheight=0.8)
+        self.search_mode_semantic_rb = Radiobutton(bar, text="语义", variable=self._search_mode_var,
+                                                    value=False, takefocus=False)
+        self.search_mode_semantic_rb.place(relx=0.93, rely=0.1, relwidth=0.07, relheight=0.8)
 
         return bar
     
     def __set_preview_results_frame(self, parent) -> Frame:
         preview_results_frame = Frame(parent)
-        preview_results_frame.place(relx=0.01, rely=0.145, relwidth=0.6170, relheight=0.855)
+        preview_results_frame.place(relx=0.004, rely=0.095, relwidth=0.736, relheight=0.897)
         return preview_results_frame
     
     def __set_preview_view(self, parent) -> BasicImagePreviewView:
@@ -142,12 +158,12 @@ class WinGUI(TkinterDnD.Tk):
 
     def __set_preview_frame1(self, parent) -> LabelFrame:
         frame = LabelFrame(parent, text="源图片")
-        frame.place(relx=0.63, rely=0.095, relwidth=0.365, relheight=0.4444)
+        frame.place(relx=0.755, rely=0.05, relwidth=0.22, relheight=0.33)
         return frame
     
     def __set_preview_frame2(self, parent) -> LabelFrame:
         frame = LabelFrame(parent, text="匹配图片")
-        frame.place(relx=0.63, rely=0.5555, relwidth=0.365, relheight=0.4444)
+        frame.place(relx=0.755, rely=0.40, relwidth=0.22, relheight=0.33)
         return frame
 
     def __set_index_tip_label(self, parent) -> Label:
@@ -168,7 +184,7 @@ class WinGUI(TkinterDnD.Tk):
     def __set_index_setting_frame(self, parent) -> LabelFrame:
         frame = LabelFrame(parent, text="索引设置")
         frame.place(relx=0.7181, rely=0.095, relwidth=0.2719, relheight=0.4738)
-        for i in range(4):
+        for i in range(7):
             frame.grid_rowconfigure(i, weight=1)
         frame.grid_columnconfigure(0, weight=1)
         return frame
@@ -190,13 +206,24 @@ class WinGUI(TkinterDnD.Tk):
 
     def __set_rebuild_index_button(self, parent) -> Button:
         btn = Button(parent, text="重建索引目录", takefocus=False)
-        btn.grid(row=3, column=0, padx=5, pady=(5, 10), ipadx=10, ipady=5, sticky=tk.NSEW)
+        btn.grid(row=3, column=0, padx=5, pady=(5, 5), ipadx=10, ipady=5, sticky=tk.NSEW)
         return btn
+
+    def __set_index_progress_bar(self, parent) -> Progressbar:
+        bar = Progressbar(parent, mode='determinate', maximum=100, value=0)
+        bar.grid(row=4, column=0, padx=10, pady=(2, 0), sticky=tk.EW)
+        bar.grid_remove()
+        return bar
+
+    def __set_index_progress_label(self, parent) -> Label:
+        label = Label(parent, text="", anchor=tk.CENTER, font=("微软雅黑", 9))
+        label.grid(row=5, column=0, padx=10, pady=(0, 2), sticky=tk.EW)
+        return label
 
     def __set_common_setting_frame(self, parent) -> LabelFrame:
         frame = LabelFrame(parent, text="通用设置")
         frame.place(relx=0.7181, rely=0.58, relwidth=0.2609+0.011, relheight=0.42)
-        for i in range(5):
+        for i in range(7):
             frame.grid_rowconfigure(i, weight=1)
         frame.grid_columnconfigure(0, weight=1, uniform='space')
         frame.grid_columnconfigure(1, weight=1, uniform='labels')
@@ -230,11 +257,21 @@ class WinGUI(TkinterDnD.Tk):
     
     def __set_open_setting_btn(self, parent) -> Button:
         button = Button(parent, text="配置文件", takefocus=True, style=LINK, cursor="hand2")
-        button.grid(row=4, column=1, pady=(5, 0), sticky=tk.E)
+        button.grid(row=6, column=1, pady=(5, 0), sticky=tk.E)
         return button
     
     def __set_open_open_repertory_btn(self, parent) -> Button:
         button = Button(parent, text="仓库地址", takefocus=True, style=LINK, cursor="hand2")
-        button.grid(row=4, column=2, pady=(5, 0), padx=20, sticky=tk.W)
+        button.grid(row=6, column=2, pady=(5, 0), padx=20, sticky=tk.W)
+        return button
+
+    def __set_backup_button(self, parent) -> Button:
+        button = Button(parent, text="备份数据库", takefocus=False)
+        button.grid(row=4, column=1, padx=5, pady=5, ipadx=10, ipady=5, columnspan=2, sticky=tk.EW)
+        return button
+
+    def __set_restore_button(self, parent) -> Button:
+        button = Button(parent, text="恢复数据库", takefocus=False)
+        button.grid(row=5, column=1, padx=5, pady=5, ipadx=10, ipady=5, columnspan=2, sticky=tk.EW)
         return button
     

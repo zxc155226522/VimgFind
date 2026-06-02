@@ -6,18 +6,72 @@ from pathlib import Path
 from typing import Literal
 import datetime
 import os
+import re
 import subprocess
 import logging
 
 from ui import WinGUI
 from widgets import BasicImagePreviewView, DetailListView, ThumbnailGridView
 from setting import Setting, WinInfo
-from utils import FileOperation, ImageOperation, Decorator
+from utils import FileOperation, ImageOperation, Decorator, DatabaseBackup
 from search_tools import SearchTool
 import webbrowser
 
 
 from PIL import Image
+
+
+class RestoreDialog(tk.Toplevel):
+    def __init__(self, parent: tk.Tk, backup_list: list[str]) -> None:
+        super().__init__(parent)
+        self.title("选择恢复备份")
+        self.result: str | None = None
+        self.transient(parent)
+        self.grab_set()
+
+        frame = tk.Frame(self, padx=10, pady=10)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        tk.Label(frame, text="请选择要恢复的备份日期：", font=("微软雅黑", 12)).pack(anchor=tk.W, pady=(0, 5))
+
+        list_frame = tk.Frame(frame)
+        list_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+
+        scrollbar = tk.Scrollbar(list_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self.listbox = tk.Listbox(list_frame, yscrollcommand=scrollbar.set, font=("微软雅黑", 10))
+        self.listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.config(command=self.listbox.yview)
+
+        for backup in backup_list:
+            self.listbox.insert(tk.END, backup)
+        if backup_list:
+            self.listbox.selection_set(0)
+
+        btn_frame = tk.Frame(frame)
+        btn_frame.pack(fill=tk.X, pady=(10, 0))
+
+        tk.Button(btn_frame, text="取消", command=self._cancel).pack(side=tk.RIGHT, padx=(5, 0))
+        tk.Button(btn_frame, text="恢复", command=self._confirm).pack(side=tk.RIGHT)
+
+        self.update_idletasks()
+        w = self.winfo_width()
+        h = self.winfo_height()
+        x = parent.winfo_rootx() + (parent.winfo_width() - w) // 2
+        y = parent.winfo_rooty() + (parent.winfo_height() - h) // 2
+        self.geometry(f"{w}x{h}+{x}+{y}")
+
+        self.wait_window()
+
+    def _confirm(self) -> None:
+        selection = self.listbox.curselection()
+        if selection:
+            self.result = self.listbox.get(selection[0])
+        self.destroy()
+
+    def _cancel(self) -> None:
+        self.destroy()
 
 
 class CoreControl(WinGUI):
@@ -26,6 +80,7 @@ class CoreControl(WinGUI):
         self.setting = Setting()
         self.__change_theme(setting_theme=True)
         self.search_tools = SearchTool(self.setting)
+        self.backup_manager = DatabaseBackup()
         self.index_table_control = IndexTableControl(self)
         self.search_control = SearchControl(self)
         self.menu_control = MenuControl(self)
@@ -53,13 +108,14 @@ class CoreControl(WinGUI):
         self.search_by_clipboard_btn.config(command=self.search_control.search_image_by_clipboard)
         self.search_entry.bind("<Return>", lambda e: self.search_control.search_image_by_text())
         self.search_btn.config(command=self.search_control.search_image_by_text)
-        self.search_mode_btn.config(command=self.search_control.toggle_search_mode)
+        self._search_mode_var.trace_add("write", self.search_control.on_search_mode_changed)
         
         # 搜索设置栏
         self.preview_detail_btn.config(command=lambda: self.search_control.set_preview_mode("detail_info"))
         self.preview_icon_btn.config(command=lambda: self.search_control.set_preview_mode("medium_ico"))
         self.similarity_scale.config(command=self.search_control.set_similarity_threshold)
         self.result_count_entry.bind("<Return>", self.search_control.set_preview_result_count_from_entry)
+        self.sort_combo.bind("<<ComboboxSelected>>", self.search_control.sort_results)
         
         # 索引设置项
         self.index_dataset_table.bind("<Double-Button-1>", self.menu_control.double_click_open_file)
@@ -72,6 +128,8 @@ class CoreControl(WinGUI):
         self.theme_combobox.bind("<<ComboboxSelected>>", lambda e: self.__change_theme())
         self.open_setting_file_button.config(command=lambda: FileOperation.open_file(Setting.config_path))
         self.open_repertory_button.config(command=lambda: webbrowser.open(r"https://github.com/Just-A-Freshman/VimgFind"))
+        self.backup_button.config(command=self.backup_database)
+        self.restore_button.config(command=self.restore_database)
 
         # 全局事件处理
         self.drop_target_register(DND_FILES)
@@ -93,6 +151,7 @@ class CoreControl(WinGUI):
             self.index_table_control.sync_index(show_message=False)
         else:
             self.index_table_control.update_index_tip()
+        self.__daily_backup()
         self.after(self.setting.schedule_save_interval, self.__schedule_save)
 
     def __init_settings_bar(self) -> None:
@@ -102,6 +161,7 @@ class CoreControl(WinGUI):
         max_count = self.setting.get_config("index", "max_match_count")
         self.result_count_entry.delete(0, tk.END)
         self.result_count_entry.insert(0, str(max_count))
+        self.similarity_scale.configure(state=tk.DISABLED)
 
     def __change_theme(self, setting_theme=False) -> None:
         style = Style()
@@ -115,7 +175,7 @@ class CoreControl(WinGUI):
         # 配置特殊Style
         style.theme_use(theme_cbo_value)
         style.configure('TNotebook.Tab', font=('微软雅黑', 12))
-        style.configure("Treeview", rowheight=50)
+        style.configure("Treeview", rowheight=55)
 
     def __on_drop(self, event: TkinterDnD.DnDEvent) -> None:
         file_paths_str: str = getattr(event, "data")
@@ -130,6 +190,40 @@ class CoreControl(WinGUI):
     def __schedule_save(self) -> None:
         self.search_tools.save_index()
         self.after(self.setting.schedule_save_interval, self.__schedule_save)
+
+    def __daily_backup(self) -> None:
+        self.backup_manager.cleanup()
+        if not self.backup_manager.today_backup_path().exists():
+            self.backup_manager.backup()
+
+    def backup_database(self) -> None:
+        success = self.backup_manager.backup()
+        if success:
+            messagebox.showinfo("提示", "数据库备份成功！")
+        else:
+            messagebox.showwarning("警告", "数据库备份失败，请检查索引文件是否存在。")
+
+    def restore_database(self) -> None:
+        backup_list = self.backup_manager.get_backup_list()
+        if not backup_list:
+            messagebox.showinfo("提示", "没有可用的备份文件。")
+            return
+        dialog = RestoreDialog(self, backup_list)
+        if dialog.result is None:
+            return
+        self.search_tools.stop_update_index()
+        try:
+            self.search_tools.save_index()
+            success = self.backup_manager.restore(dialog.result)
+            if success:
+                self.search_tools.reset_index()
+                messagebox.showinfo("提示", f"已从 {dialog.result} 恢复数据库，请重启程序使更改生效。")
+            else:
+                messagebox.showerror("错误", "数据库恢复失败。")
+        except Exception as e:
+            messagebox.showerror("错误", f"恢复过程中发生错误：{e}")
+        finally:
+            self.search_tools.continue_update_index()
     
     def destroy(self) -> None:
         try:
@@ -140,6 +234,7 @@ class CoreControl(WinGUI):
             self.setting.clean_log()
             self.search_tools.destroy()
             self.search_tools.save_index()
+            self.backup_manager.backup()
             FileOperation.clear_folder_all(Setting.temp_image_path)
             self.search_tools.set_force_end_update(True)
         except Exception as e:
@@ -157,12 +252,12 @@ class SearchControl(object):
         self._preview_timer: str = ""
         self.core_control = core_control
 
-    def toggle_search_mode(self) -> None:
-        self._is_name_search = not self._is_name_search
+    def on_search_mode_changed(self, *_) -> None:
+        self._is_name_search = self.core_control._search_mode_var.get()
         if self._is_name_search:
-            self.core_control.search_mode_btn.config(text="文件名搜索")
+            self.core_control.similarity_scale.configure(state=tk.DISABLED)
         else:
-            self.core_control.search_mode_btn.config(text="语义搜索")
+            self.core_control.similarity_scale.configure(state=tk.NORMAL)
 
     @Decorator.send_task
     def search_by_browser(self, image_path: str | None = None) -> None:
@@ -220,7 +315,12 @@ class SearchControl(object):
             return
         self._is_finish_search = False
         self._last_search_content = input_data
+        if isinstance(input_data, str) and self._is_name_search:
+            self.core_control.preview_view.set_search_text(input_data)
+        else:
+            self.core_control.preview_view.set_search_text("")
         self.core_control.preview_view.clear_results()
+        self.core_control.sort_combo.set("相似度")
         try:
             if isinstance(input_data, str) and self._is_name_search:
                 results = self.core_control.search_tools.checkout_by_name(input_data)
@@ -229,10 +329,6 @@ class SearchControl(object):
             try:
                 first_result = next(results)
             except StopIteration:
-                if self.core_control.search_tools.is_empty_index():
-                    messagebox.showinfo("提示", "索引中还没有任何图像，也许\n你还没有添加并更新索引目录？")
-                else:
-                    messagebox.showerror("错误", "图片搜索失败！\n请查看config/error.log获取错误信息！")
                 self._is_finish_search = True
                 return
             first_img_path, first_sim = first_result
@@ -302,11 +398,19 @@ class SearchControl(object):
             )
         else:
             self.core_control.preview_view = ThumbnailGridView(self.core_control.preview_container)
+            if self._is_name_search and isinstance(self._last_search_content, str):
+                self.core_control.preview_view.set_search_text(self._last_search_content)
         self.core_control.bind_event()
         for result in results:
             img_path, *extra_info = result
             self.core_control.preview_view.append_result(img_path, *extra_info)
         self.core_control.preview_view.selection_set(*current_selection)
+
+    def sort_results(self, *_) -> None:
+        view = self.core_control.preview_view
+        if isinstance(view, ThumbnailGridView):
+            sort_key = self.core_control.sort_combo.get()
+            view.sort_results(sort_key)
 
     def preview_found_image(self, event: tk.Event) -> None:
         @Decorator.send_task
@@ -392,6 +496,9 @@ class IndexTableControl(object):
             command=lambda: self.core_control.search_tools.set_force_end_update(True)
         )
         self._is_updating = True
+        self.core_control.index_progress_bar.grid()
+        self.core_control.index_progress_bar.config(value=0)
+        self.core_control.index_progress_label.config(text="准备中...")
         self.__check_queue()
         self.core_control.search_tools.remove_nonexists()
         for image_dir in self.core_control.setting.get_config("index", "search_dir"):
@@ -403,6 +510,8 @@ class IndexTableControl(object):
         self.core_control.update_index_button.config(text="更新索引目录", command=self.sync_index)
         self.core_control.delete_index_button.config(state=tk.ACTIVE)
         self.core_control.rebuild_index_button.config(state=tk.ACTIVE)
+        self.core_control.index_progress_bar.grid_remove()
+        self.core_control.index_progress_label.config(text="")
         if show_message:
             messagebox.showinfo("提示", "索引更新完成！")
         self.core_control.after(1000, self.update_index_tip)
@@ -435,12 +544,21 @@ class IndexTableControl(object):
         self.core_control.after(1000, self.update_index_tip)
 
     def __check_queue(self) -> None:
+        last_message = ""
         try:
             while True:
-                message = Decorator.progress_queue.get_nowait()
-                self.core_control.index_tip_label.config(text=message)
+                last_message = Decorator.progress_queue.get_nowait()
         except Exception:
             pass
+        if last_message:
+            self.core_control.index_tip_label.config(text=last_message)
+            match = re.search(r"\((\d+\.?\d*)%\)", last_message)
+            if match:
+                percent = float(match.group(1))
+                self.core_control.index_progress_bar.config(value=percent)
+                self.core_control.index_progress_label.config(text=f"{percent:.1f}%")
+            else:
+                self.core_control.index_progress_label.config(text=last_message)
         if self._is_updating:
             self.core_control.after(200, self.__check_queue)
 
