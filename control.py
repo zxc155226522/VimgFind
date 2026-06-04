@@ -110,6 +110,13 @@ class CoreControl(WinGUI):
         self.search_entry.bind("<Return>", lambda e: self.search_control.search_image_by_text())
         self.search_btn.config(command=self.search_control.search_image_by_text)
         self._search_mode_var.trace_add("write", self.search_control.on_search_mode_changed)
+
+        # 搜索输入框：拖放图片文件
+        self.search_entry.drop_target_register(DND_FILES)
+        self.search_entry.dnd_bind('<<Drop>>', self.__on_search_entry_drop)
+
+        # 搜索输入框：Ctrl+V 粘贴图片路径
+        self.search_entry.bind("<Control-v>", self.__on_search_entry_paste)
         
         # 搜索设置栏
         self.preview_detail_btn.config(command=lambda: self.search_control.set_preview_mode("detail_info"))
@@ -197,6 +204,26 @@ class CoreControl(WinGUI):
         elif tab_id == 1:
             for dir_path in file_paths:
                 self.index_table_control.add_search_dir(dir_path)
+
+    def __on_search_entry_drop(self, event: TkinterDnD.DnDEvent) -> None:
+        """搜索输入框拖放图片文件"""
+        file_paths_str: str = getattr(event, "data")
+        file_paths = FileOperation.extract_file_paths(file_paths_str)
+        if file_paths:
+            self.search_control.search_by_browser(file_paths[0])
+
+    def __on_search_entry_paste(self, event: tk.Event) -> None:
+        """搜索输入框 Ctrl+V：如果粘贴内容包含图片路径则自动搜索"""
+        self.after_idle(self._do_search_entry_paste)
+
+    def _do_search_entry_paste(self) -> None:
+        """检查粘贴后的输入框内容是否为图片路径，是则触发搜索"""
+        text = self.search_entry.get().strip()
+        if not text:
+            return
+        path = Path(text)
+        if path.is_file() and path.suffix.lower() in Setting.accepted_exts:
+            self.search_control.search_by_browser(text)
 
     def __schedule_save(self) -> None:
         self.search_tools.save_index()
