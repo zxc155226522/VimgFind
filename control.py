@@ -308,13 +308,14 @@ class SearchControl(object):
             )
             if not image_path:
                 return
-        self.core_control.search_entry.delete(0, tk.END)
-        self.core_control.search_entry.insert(0, image_path)
+        self.core_control.after(0, lambda: self.core_control.search_entry.delete(0, tk.END))
+        self.core_control.after(0, lambda p=image_path: self.core_control.search_entry.insert(0, p))
         image_obj = ImageOperation.get_image_obj(image_path)
         if image_obj is None:
             messagebox.showwarning("警告", "无法识别该图片类型！")
             return
-        self.core_control.preview_canvas1.append_result(image_path, image_obj)
+        self.core_control.after(0, lambda p=image_path, o=image_obj: 
+            self.core_control.preview_canvas1.append_result(p, o))
         self.__search_image(image_obj)
 
     @Decorator.send_task
@@ -337,13 +338,14 @@ class SearchControl(object):
                 Path.mkdir(Setting.temp_image_path, exist_ok=True)
             image_obj.save(image_path)
 
-        self.core_control.preview_canvas1.append_result(str(image_path.absolute()), image_obj)
+        self.core_control.after(0, lambda p=str(image_path.absolute()), o=image_obj: 
+            self.core_control.preview_canvas1.append_result(p, o))
         self.__search_image(image_obj)
 
     @Decorator.send_task
     def search_image_by_text(self) -> None:
         text = self.core_control.search_entry.get().strip()
-        self.core_control.preview_canvas1.clear_results()
+        self.core_control.after(0, self.core_control.preview_canvas1.clear_results)
         self.__search_image(text)
 
     def __search_image(self, input_data: Image.Image | str) -> None:
@@ -354,12 +356,12 @@ class SearchControl(object):
             return
         self._is_finish_search = False
         self._last_search_content = input_data
+        # UI初始化操作转发到主线程
         if isinstance(input_data, str) and self._is_name_search:
-            self.core_control.preview_view.set_search_text(input_data)
+            search_text = input_data
         else:
-            self.core_control.preview_view.set_search_text("")
-        self.core_control.preview_view.clear_results()
-        self.core_control.sort_combo.set("相似度")
+            search_text = ""
+        self.core_control.after(0, self._prepare_search_ui, search_text)
         try:
             if isinstance(input_data, str) and self._is_name_search:
                 results = self.core_control.search_tools.checkout_by_name(input_data)
@@ -371,20 +373,40 @@ class SearchControl(object):
                 self._is_finish_search = True
                 return
             first_img_path, first_sim = first_result
+            # 先收集所有结果到列表
+            all_extra_info: list[tuple[str, tuple]] = []
             if Path(first_img_path).exists():
                 first_extra_info = self.generate_extra_info(first_img_path, first_sim)
-                item = self.core_control.preview_view.append_result(first_img_path, *first_extra_info)
-                self.core_control.preview_view.selection_set(item)
+                all_extra_info.append((first_img_path, first_extra_info))
             
             for img_path, similarity in results:
                 if Path(img_path).exists():
                     extra_info = self.generate_extra_info(img_path, similarity)
-                    self.core_control.preview_view.append_result(img_path, *extra_info)
+                    all_extra_info.append((img_path, extra_info))
+            
+            # 在主线程中统一更新UI
+            self.core_control.after(0, self._batch_append_results, all_extra_info)
         except Exception as e:
             logging.error(f"搜索时发生异常: {e}", exc_info=True)
             messagebox.showerror("错误", f"搜索失败：{e}")
         finally:
             self._is_finish_search = True
+
+    def _prepare_search_ui(self, search_text: str) -> None:
+        """在主线程中准备搜索UI（清除旧结果、设置搜索文本等）"""
+        self.core_control.preview_view.set_search_text(search_text)
+        self.core_control.preview_view.clear_results()
+        self.core_control.sort_combo.set("相似度")
+
+    def _batch_append_results(self, results: list[tuple[str, tuple]]) -> None:
+        """在主线程中批量添加搜索结果到预览视图"""
+        first_item = None
+        for idx, (img_path, extra_info) in enumerate(results):
+            item = self.core_control.preview_view.append_result(img_path, *extra_info)
+            if idx == 0:
+                first_item = item
+        if first_item is not None:
+            self.core_control.preview_view.selection_set(first_item)
 
     def generate_extra_info(self, image_path: str, similarity: float) -> tuple:
         image_path_obj = Path(image_path)
@@ -470,7 +492,8 @@ class SearchControl(object):
             image_path = self.core_control.preview_view.item(first_item)[0]
             image_obj = ImageOperation.get_image_obj(image_path)
             if image_obj is not None:
-                self.core_control.preview_canvas2.append_result(image_path, image_obj)
+                self.core_control.after(0, lambda p=image_path, o=image_obj: 
+                    self.core_control.preview_canvas2.append_result(p, o))
         except KeyError:
             return
 

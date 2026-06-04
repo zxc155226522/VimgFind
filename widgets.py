@@ -1032,6 +1032,8 @@ class ThumbnailGridView(BasicImagePreviewView):
                 self._set_item_selected(item, True)
         self.parent.after(100, self._load_visible_images)
         self._canvas.event_generate("<<ItemviewSelect>>")
+        # 重新启动_check_results轮询
+        self._check_results()
 
     def append_result(self, image_path: str, *extra_info: str | int) -> str:
         item = self._generate_unique_path_item(image_path)
@@ -1053,6 +1055,8 @@ class ThumbnailGridView(BasicImagePreviewView):
         self._hovered_button = None
         self._canvas.delete(tk.ALL)        
         self._update_layout()
+        # 重新启动_check_results轮询，因为_cancel_timer会中断该循环
+        self._check_results()
 
     def selection(self) -> tuple[str, ...]:
         return tuple(self._selected_items)
