@@ -246,6 +246,7 @@ class DetailListView(BasicImagePreviewView):
 
     def __init__(self, parent: tk.Widget, extra_columns: dict[str, int]) -> None:
         super().__init__(parent)
+        self._is_destroy = False
         self._thumbnail_cache: dict[str, ImageTk.PhotoImage] = {}
         self._create_treeview(extra_columns)
         self.parent.after(50, self._create_scrollbar)
@@ -263,6 +264,8 @@ class DetailListView(BasicImagePreviewView):
             self.__treeview.heading(column, command=lambda column=column: self._sort_column(column, False))
 
     def _create_scrollbar(self) -> None:
+        if self._is_destroy:
+            return
         self.__scrollbar = Scrollbar(self.__treeview, orient="vertical", cursor="hand2")
         self.__scrollbar.pack(fill="both", side="right", padx=2, pady=2)
         self.__scrollbar.config(command=self.__treeview.yview)
@@ -292,6 +295,8 @@ class DetailListView(BasicImagePreviewView):
 
     def _load_thumbnail_async(self, image_path: str, iid: str) -> None:
         def _do_load() -> None:
+            if self._is_destroy:
+                return
             try:
                 img = Image.open(image_path)
                 img.thumbnail((self.THUMB_SIZE, self.THUMB_SIZE))
@@ -305,10 +310,17 @@ class DetailListView(BasicImagePreviewView):
         threading.Thread(target=_do_load, daemon=True).start()
 
     def _set_thumbnail(self, iid: str, photo: ImageTk.PhotoImage) -> None:
-        if self.__treeview.exists(iid):
-            self.__treeview.item(iid, image=photo)
+        if self._is_destroy:
+            return
+        try:
+            if self.__treeview.exists(iid):
+                self.__treeview.item(iid, image=photo)
+        except tk.TclError:
+            pass
             
     def clear_results(self) -> None:
+        if self._is_destroy:
+            return
         self._results.clear()
         self._thumbnail_cache.clear()
         self.__treeview.delete(*self.__treeview.get_children())
@@ -333,8 +345,15 @@ class DetailListView(BasicImagePreviewView):
         self.__treeview.bind(sequence, func)
 
     def destroy(self) -> None:
-        self.__scrollbar.destroy()
-        self.__treeview.destroy()
+        self._is_destroy = True
+        try:
+            self.__scrollbar.destroy()
+        except Exception:
+            pass
+        try:
+            self.__treeview.destroy()
+        except Exception:
+            pass
 
 
 

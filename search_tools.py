@@ -76,6 +76,10 @@ class SearchTool(object):
         self.__init_event.wait()
         return self.__name_idx_mgr.valid_index_count
 
+    def get_device_info(self) -> str:
+        self.__init_event.wait()
+        return getattr(self.__multimodal_encoder, 'device_info', '未知')
+
     def __get_changed_files_index(self) -> list[tuple[int, str]]:
         changed_files_index = []
         for idx, [index_file, old_metainfo] in enumerate(self.__name_idx_mgr.name_index):

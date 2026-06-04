@@ -35,6 +35,23 @@ class MultiModalEncoder:
         self.__tokenizer = FullTokenizer(vocab_path) if vocab_path.exists() else None
         self.image_session = self._init_onnx_session(image_encoder_path, "图像编码器")
         self.text_session = self._init_onnx_session(text_encoder_path, "文本编码器")
+        self.device_info = self._detect_device_info()
+
+    @staticmethod
+    def _detect_device_info() -> str:
+        """检测当前可用的加速设备"""
+        available = ort.get_available_providers()
+        gpu_providers = {
+            'DmlExecutionProvider': 'DirectML (GPU)',
+            'CUDAExecutionProvider': 'CUDA (NVIDIA GPU)',
+            'TensorrtExecutionProvider': 'TensorRT (NVIDIA GPU)',
+            'OpenVINOExecutionProvider': 'OpenVINO (Intel)',
+            'CoreMLExecutionProvider': 'CoreML (Apple)',
+        }
+        for prov, label in gpu_providers.items():
+            if prov in available:
+                return label
+        return "CPU"
 
     def tokenize(self, texts) -> np.ndarray:
         if self.__tokenizer is None:

@@ -147,6 +147,8 @@ class CoreControl(WinGUI):
     def __env_init(self) -> None:
         self.index_table_control.refresh_index_dataset_table()
         self.update_threads_count_scale.set(value=self.setting.get_config("function", "max_work_thread"))
+        # 显示设备信息
+        self.__update_device_info()
         if self.setting.get_config("function", "auto_update_index"):
             self.auto_update_btn.invoke()
             self.index_table_control.sync_index(show_message=False)
@@ -154,6 +156,14 @@ class CoreControl(WinGUI):
             self.index_table_control.update_index_tip()
         self.__daily_backup()
         self.after(self.setting.schedule_save_interval, self.__schedule_save)
+
+    def __update_device_info(self) -> None:
+        """读取编码器设备信息并显示到界面上"""
+        try:
+            device = self.search_tools.get_device_info()
+            self.device_info_label.config(text=f"推理设备：{device}")
+        except Exception:
+            self.device_info_label.config(text="推理设备：未知")
 
     def __init_settings_bar(self) -> None:
         threshold = self.setting.get_config("function", "similarity_threshold")
@@ -251,6 +261,7 @@ class SearchControl(object):
         self._is_finish_search: bool = True
         self._is_name_search: bool = True
         self._preview_timer: str = ""
+        self._switching_mode: bool = False
         self.core_control = core_control
 
     def on_search_mode_changed(self, *_) -> None:
@@ -388,6 +399,7 @@ class SearchControl(object):
         self._re_search()
 
     def set_preview_mode(self, mode: Literal["detail_info", "medium_ico"]) -> None:
+        self._switching_mode = True
         results = self.core_control.preview_view.get_show_results()
         current_selection = self.core_control.preview_view.selection()
         self.core_control.preview_view.destroy()
@@ -406,6 +418,7 @@ class SearchControl(object):
             img_path, *extra_info = result
             self.core_control.preview_view.append_result(img_path, *extra_info)
         self.core_control.preview_view.selection_set(*current_selection)
+        self._switching_mode = False
 
     def sort_results(self, *_) -> None:
         view = self.core_control.preview_view
@@ -414,6 +427,8 @@ class SearchControl(object):
             view.sort_results(sort_key)
 
     def preview_found_image(self, event: tk.Event) -> None:
+        if self._switching_mode:
+            return
         selection = self.core_control.preview_view.selection()
         if not selection:
             return

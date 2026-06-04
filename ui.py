@@ -1,7 +1,7 @@
 from ttkbootstrap import Button, Entry, Checkbutton, Radiobutton, Scale, Style, Progressbar
 from ttkbootstrap.constants import LINK
 from tkinter.ttk import (
-    Notebook, Frame, Treeview, Label, LabelFrame, Combobox
+    Notebook, Frame, Treeview, Label, LabelFrame, Combobox, Separator
 )
 from tkinterdnd2 import TkinterDnD
 import tkinter as tk
@@ -48,6 +48,7 @@ class WinGUI(TkinterDnD.Tk):
         self.open_repertory_button = self.__set_open_open_repertory_btn(self.common_setting_frame)
         self.backup_button = self.__set_backup_button(self.common_setting_frame)
         self.restore_button = self.__set_restore_button(self.common_setting_frame)
+        self.device_info_label = self.__set_device_info_label(self.common_setting_frame)
 
     def _set_dpi_awareness(self) -> None:
         try:
@@ -223,7 +224,7 @@ class WinGUI(TkinterDnD.Tk):
     def __set_common_setting_frame(self, parent) -> LabelFrame:
         frame = LabelFrame(parent, text="通用设置")
         frame.place(relx=0.7181, rely=0.58, relwidth=0.2609+0.011, relheight=0.42)
-        for i in range(7):
+        for i in range(8):
             frame.grid_rowconfigure(i, weight=1)
         frame.grid_columnconfigure(0, weight=1, uniform='space')
         frame.grid_columnconfigure(1, weight=1, uniform='labels')
@@ -248,21 +249,21 @@ class WinGUI(TkinterDnD.Tk):
         return checkbtn
 
     def __set_update_threads_count_scale(self, parent) -> Scale:
-        tip = Label(parent, text=f"更新线程：04")
+        tip = Label(parent, text="更新线程：--")
         tip.grid(row=3, column=1, padx=(5, 10), sticky=tk.E)
-        scale = Scale(parent, from_=4, to=20, orient=tk.HORIZONTAL)
+        scale = Scale(parent, from_=1, to=32, orient=tk.HORIZONTAL)
         scale.grid(row=3, column=2, padx=(0, 5), sticky=tk.EW)
-        scale.config(command=lambda value: tip.config(text=f"更新线程:  {int(float(value)):0>2}"))
+        scale.config(command=lambda value: tip.config(text=f"更新线程：{int(float(value)):0>2}"))
         return scale
     
     def __set_open_setting_btn(self, parent) -> Button:
         button = Button(parent, text="配置文件", takefocus=True, style=LINK, cursor="hand2")
-        button.grid(row=6, column=1, pady=(5, 0), sticky=tk.E)
+        button.grid(row=8, column=1, pady=(5, 0), sticky=tk.E)
         return button
     
     def __set_open_open_repertory_btn(self, parent) -> Button:
         button = Button(parent, text="仓库地址", takefocus=True, style=LINK, cursor="hand2")
-        button.grid(row=6, column=2, pady=(5, 0), padx=20, sticky=tk.W)
+        button.grid(row=8, column=2, pady=(5, 0), padx=20, sticky=tk.W)
         return button
 
     def __set_backup_button(self, parent) -> Button:
@@ -274,4 +275,11 @@ class WinGUI(TkinterDnD.Tk):
         button = Button(parent, text="恢复数据库", takefocus=False)
         button.grid(row=5, column=1, padx=5, pady=5, ipadx=10, ipady=5, columnspan=2, sticky=tk.EW)
         return button
+
+    def __set_device_info_label(self, parent) -> Label:
+        sep = Separator(parent, orient=tk.HORIZONTAL)
+        sep.grid(row=6, column=0, columnspan=4, padx=10, pady=(5, 2), sticky=tk.EW)
+        label = Label(parent, text="推理设备：检测中...", anchor=tk.CENTER, font=("微软雅黑", 9))
+        label.grid(row=7, column=0, columnspan=4, padx=5, pady=(0, 5), sticky=tk.EW)
+        return label
     
