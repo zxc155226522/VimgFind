@@ -496,18 +496,6 @@ class ThumbnailGridView(BasicImagePreviewView):
         self._schedule_load()
     
     def _on_mousewheel(self, event: tk.Event) -> None:
-        # Ctrl + 滚轮：缩放缩略图（调整目标缩略图尺寸，列数与间距自动计算）
-        ctrl_pressed = (event.state & 0x0004) != 0
-        if ctrl_pressed:
-            if event.delta:
-                delta = self.THUMB_STEP if event.delta > 0 else -self.THUMB_STEP
-                self._target_thumb_size = max(
-                    self.MIN_THUMB_SIZE,
-                    min(self.MAX_THUMB_SIZE, self._target_thumb_size + delta)
-                )
-                self._update_layout()
-            return
-
         # 普通滚动
         if event.delta:
             delta = int(-1 * (event.delta / 120))
@@ -903,14 +891,14 @@ class ThumbnailGridView(BasicImagePreviewView):
         canvas_height = self._canvas.winfo_height()
 
         old_thumb_size = self.THUMBNAIL_SIZE
-        # 期望缩略图尺寸 + 窗口可用宽度 → 自动计算列数与水平间距
+        # 固定5列，缩略图大小根据窗口宽度自动计算
         available_width = max(canvas_width - self.MARGIN * 2, self.MIN_THUMB_SIZE)
-        target = max(self.MIN_THUMB_SIZE, min(self.MAX_THUMB_SIZE, self._target_thumb_size))
-        self._cols = max(1, available_width // target)
-        # 剩余空间均分给列间距
-        gap_total = max(0, available_width - self._cols * target)
-        self._h_gap = self.MARGIN if self._cols <= 1 else (gap_total // (self._cols - 1))
-        self.THUMBNAIL_SIZE = target
+        self._cols = 5
+        self._h_gap = self.MARGIN
+        self.THUMBNAIL_SIZE = max(
+            self.MIN_THUMB_SIZE,
+            min(self.MAX_THUMB_SIZE, (available_width - (self._cols - 1) * self._h_gap) // self._cols)
+        )
         size_changed = old_thumb_size != self.THUMBNAIL_SIZE
 
         if size_changed and old_thumb_size != 0:
