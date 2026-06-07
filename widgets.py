@@ -361,13 +361,15 @@ class ThumbnailGridView(BasicImagePreviewView):
     """
     缩略图网格式绘制类，不提供指定位置插入元素及删除操作
     """
-    THUMBNAIL_SIZE: int = WinInfo.TkS(110)
+    THUMBNAIL_SIZE: int = WinInfo.TkS(150)
     MARGIN: int = WinInfo.TkS(10)
-    H_GAP: int = WinInfo.TkS(16)
     FONT_HEGIHT: int = WinInfo.TkS(32)
     BUTTON_HEIGHT: int = WinInfo.TkS(30)
     BUTTON_GAP: int = WinInfo.TkS(4)
     PRELOAD_ROWS: int = 3
+    MIN_THUMB_SIZE: int = 80
+    MAX_THUMB_SIZE: int = 400
+    THUMB_STEP: int = 20
     def __init__(self, parent: tk.Widget) -> None:
         super().__init__(parent)
         self._create_canvas()
@@ -396,7 +398,8 @@ class ThumbnailGridView(BasicImagePreviewView):
         self._check_timer = ""
 
         self._cols = 0
-        self._target_cols = 8
+        self._h_gap = self.MARGIN
+        self._target_thumb_size = self.THUMBNAIL_SIZE
         self._is_destroy = False
         self._is_scrollbar_dragging = False
         
@@ -493,12 +496,15 @@ class ThumbnailGridView(BasicImagePreviewView):
         self._schedule_load()
     
     def _on_mousewheel(self, event: tk.Event) -> None:
-        # Ctrl + 滚轮：缩放缩略图（调整列数）
+        # Ctrl + 滚轮：缩放缩略图（调整目标缩略图尺寸，列数与间距自动计算）
         ctrl_pressed = (event.state & 0x0004) != 0
         if ctrl_pressed:
             if event.delta:
-                delta = 1 if event.delta > 0 else -1
-                self._target_cols = max(2, min(20, self._target_cols - delta))
+                delta = self.THUMB_STEP if event.delta > 0 else -self.THUMB_STEP
+                self._target_thumb_size = max(
+                    self.MIN_THUMB_SIZE,
+                    min(self.MAX_THUMB_SIZE, self._target_thumb_size + delta)
+                )
                 self._update_layout()
             return
 
@@ -663,8 +669,9 @@ class ThumbnailGridView(BasicImagePreviewView):
             text_tags += ("search_highlight",)
         image_info_id = self._canvas.create_text(
             x + self.THUMBNAIL_SIZE // 2, 
-            y + self.THUMBNAIL_SIZE + self.MARGIN // 2 + self.FONT_HEGIHT // 2,
-            text=filename, fill=text_fill, tags=text_tags
+            y + self.THUMBNAIL_SIZE + self.MARGIN // 2,
+            text=filename, fill=text_fill, tags=text_tags,
+            anchor=tk.N, width=self.THUMBNAIL_SIZE
         )
         self._canvas.tag_bind(image_info_id, "<ButtonPress-1>", lambda e, it=item: self._on_filename_drag_start(e, it))
         self._canvas.tag_bind(image_info_id, "<ButtonRelease-1>", lambda e, it=item: self._on_filename_drag_end(e, it))
@@ -688,13 +695,14 @@ class ThumbnailGridView(BasicImagePreviewView):
         x, y = self._get_item_position(item)
         
         self._canvas.delete(canvas_item["placeholder_id"])
+        canvas_item["placeholder_id"] = ""
 
         filename = os.path.basename(self._results[item][0])
         width, height = image_data["size"]
         
         tip_info = f"{filename}\n{width} × {height}"
         text_fill = self._highlight_color if self._search_text and self._search_text.lower() in filename.lower() else self.theme_color.fg
-        self._canvas.itemconfig(canvas_item["image_info_id"], text=tip_info, fill=text_fill)
+        self._canvas.itemconfig(canvas_item["image_info_id"], text=tip_info, fill=text_fill, width=self.THUMBNAIL_SIZE)
         if self._search_text and self._search_text.lower() in filename.lower():
             self._canvas.itemconfig(canvas_item["image_info_id"], tags=("filename_text", "copy_filename", f"item:{item}", "search_highlight"))
         
@@ -895,8 +903,14 @@ class ThumbnailGridView(BasicImagePreviewView):
         canvas_height = self._canvas.winfo_height()
 
         old_thumb_size = self.THUMBNAIL_SIZE
-        self._cols = max(1, self._target_cols)
-        self.THUMBNAIL_SIZE = max(60, (canvas_width - self.H_GAP * (self._cols - 1) - self.MARGIN * 3 // 2) // self._cols)
+        # 期望缩略图尺寸 + 窗口可用宽度 → 自动计算列数与水平间距
+        available_width = max(canvas_width - self.MARGIN * 2, self.MIN_THUMB_SIZE)
+        target = max(self.MIN_THUMB_SIZE, min(self.MAX_THUMB_SIZE, self._target_thumb_size))
+        self._cols = max(1, available_width // target)
+        # 剩余空间均分给列间距
+        gap_total = max(0, available_width - self._cols * target)
+        self._h_gap = self.MARGIN if self._cols <= 1 else (gap_total // (self._cols - 1))
+        self.THUMBNAIL_SIZE = target
         size_changed = old_thumb_size != self.THUMBNAIL_SIZE
 
         if size_changed and old_thumb_size != 0:
@@ -910,12 +924,19 @@ class ThumbnailGridView(BasicImagePreviewView):
                 if border_id:
                     self._canvas.coords(border_id, x - 4, y - 4, x + self.THUMBNAIL_SIZE + 4, y + self.THUMBNAIL_SIZE + 4)
 
-                self._canvas.coords(canvas_item["placeholder_id"], x + self.THUMBNAIL_SIZE // 2, y + self.THUMBNAIL_SIZE // 2)
-                self._canvas.coords(canvas_item["image_info_id"],  x + self.THUMBNAIL_SIZE // 2, y + self.THUMBNAIL_SIZE + self.MARGIN // 2 + self.FONT_HEGIHT // 2)
+                placeholder_id = canvas_item.get("placeholder_id", "")
+                if placeholder_id:
+                    try:
+                        self._canvas.coords(placeholder_id, x + self.THUMBNAIL_SIZE // 2, y + self.THUMBNAIL_SIZE // 2)
+                    except tk.TclError:
+                        pass
+                self._canvas.coords(canvas_item["image_info_id"],  x + self.THUMBNAIL_SIZE // 2, y + self.THUMBNAIL_SIZE + self.MARGIN // 2)
+                self._canvas.itemconfig(canvas_item["image_info_id"], width=self.THUMBNAIL_SIZE)
                 self._create_action_buttons(item)
 
-            # 缩略图尺寸变了，清除缓存以新尺寸重新加载
+            # 缩略图尺寸变了，清除缓存和加载队列以新尺寸重新加载
             self._visible_image_data.clear()
+            self._loading_tasks.clear()
             self._load_visible_images()
 
         item_height = self.THUMBNAIL_SIZE + self.MARGIN + self.FONT_HEGIHT + self.BUTTON_HEIGHT + self.BUTTON_GAP
@@ -935,7 +956,7 @@ class ThumbnailGridView(BasicImagePreviewView):
         row = index // self._cols
         col = index % self._cols
         
-        item_width = self.THUMBNAIL_SIZE + self.H_GAP
+        item_width = self.THUMBNAIL_SIZE + self._h_gap
         item_height = self.THUMBNAIL_SIZE + self.MARGIN + self.FONT_HEGIHT + self.BUTTON_HEIGHT + self.BUTTON_GAP
         
         x = col * item_width + self.MARGIN + self.MARGIN // 2

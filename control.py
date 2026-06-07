@@ -96,7 +96,6 @@ class CoreControl(WinGUI):
             self.index_table_control.sync_index(show_message=False)
         else:
             self.index_table_control.update_index_tip()
-        self.__daily_backup()
         self.after(self.setting.schedule_save_interval, self.__schedule_save)
 
     def __update_device_info(self) -> None:
