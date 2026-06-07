@@ -6,73 +6,24 @@ from pathlib import Path
 from typing import Literal
 import datetime
 import os
-import re
 import subprocess
 import logging
+import ctypes
+import io
+
+import win32clipboard
+import win32con
 
 from ui import WinGUI
 from widgets import BasicImagePreviewView, DetailListView, ThumbnailGridView
 from setting import Setting, WinInfo
-from utils import FileOperation, ImageOperation, Decorator, DatabaseBackup
-from utils import Empty
+from utils import FileOperation, ImageOperation, Decorator
+from utils import DROPFILES
 from search_tools import SearchTool
 import webbrowser
 
 
 from PIL import Image
-
-
-class RestoreDialog(tk.Toplevel):
-    def __init__(self, parent: tk.Tk, backup_list: list[str]) -> None:
-        super().__init__(parent)
-        self.title("选择恢复备份")
-        self.result: str | None = None
-        self.transient(parent)
-        self.grab_set()
-
-        frame = tk.Frame(self, padx=10, pady=10)
-        frame.pack(fill=tk.BOTH, expand=True)
-
-        tk.Label(frame, text="请选择要恢复的备份日期：", font=("微软雅黑", 12)).pack(anchor=tk.W, pady=(0, 5))
-
-        list_frame = tk.Frame(frame)
-        list_frame.pack(fill=tk.BOTH, expand=True, pady=5)
-
-        scrollbar = tk.Scrollbar(list_frame)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
-        self.listbox = tk.Listbox(list_frame, yscrollcommand=scrollbar.set, font=("微软雅黑", 10))
-        self.listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        scrollbar.config(command=self.listbox.yview)
-
-        for backup in backup_list:
-            self.listbox.insert(tk.END, backup)
-        if backup_list:
-            self.listbox.selection_set(0)
-
-        btn_frame = tk.Frame(frame)
-        btn_frame.pack(fill=tk.X, pady=(10, 0))
-
-        tk.Button(btn_frame, text="取消", command=self._cancel).pack(side=tk.RIGHT, padx=(5, 0))
-        tk.Button(btn_frame, text="恢复", command=self._confirm).pack(side=tk.RIGHT)
-
-        self.update_idletasks()
-        w = self.winfo_width()
-        h = self.winfo_height()
-        x = parent.winfo_rootx() + (parent.winfo_width() - w) // 2
-        y = parent.winfo_rooty() + (parent.winfo_height() - h) // 2
-        self.geometry(f"{w}x{h}+{x}+{y}")
-
-        self.wait_window()
-
-    def _confirm(self) -> None:
-        selection = self.listbox.curselection()
-        if selection:
-            self.result = self.listbox.get(selection[0])
-        self.destroy()
-
-    def _cancel(self) -> None:
-        self.destroy()
 
 
 class CoreControl(WinGUI):
@@ -81,12 +32,10 @@ class CoreControl(WinGUI):
         self.setting = Setting()
         self.__change_theme(setting_theme=True)
         self.search_tools = SearchTool(self.setting)
-        self.backup_manager = DatabaseBackup()
         self.index_table_control = IndexTableControl(self)
         self.search_control = SearchControl(self)
         self.menu_control = MenuControl(self)
         self.search_control.set_preview_mode(self.setting.get_config("function", "preview_mode"))
-        self.__init_settings_bar()
         self.__env_init()
         self.bind_event(first_time=True)
         
@@ -108,22 +57,10 @@ class CoreControl(WinGUI):
         self.search_by_browser_btn.config(command=self.search_control.search_by_browser)
         self.search_by_clipboard_btn.config(command=self.search_control.search_image_by_clipboard)
         self.search_entry.bind("<Return>", lambda e: self.search_control.search_image_by_text())
-        self.search_btn.config(command=self.search_control.search_image_by_text)
-        self._search_mode_var.trace_add("write", self.search_control.on_search_mode_changed)
-
-        # 搜索输入框：拖放图片文件
-        self.search_entry.drop_target_register(DND_FILES)
-        self.search_entry.dnd_bind('<<Drop>>', self.__on_search_entry_drop)
-
-        # 搜索输入框：Ctrl+V 粘贴图片路径
-        self.search_entry.bind("<Control-v>", self.__on_search_entry_paste)
-        
-        # 搜索设置栏
-        self.preview_detail_btn.config(command=lambda: self.search_control.set_preview_mode("detail_info"))
-        self.preview_icon_btn.config(command=lambda: self.search_control.set_preview_mode("medium_ico"))
-        self.similarity_scale.config(command=self.search_control.set_similarity_threshold)
-        self.result_count_entry.bind("<Return>", self.search_control.set_preview_result_count_from_entry)
-        self.sort_combo.bind("<<ComboboxSelected>>", self.search_control.sort_results)
+        self.search_btn.config(command=lambda: self.search_control.search_image_by_text())
+        self.search_entry.bind("<<Paste>>", self.__on_search_entry_paste)
+        self.search_entry.bind("<FocusOut>", lambda e: self.after(50, self.search_entry.focus_set))
+        self.more_options_button.config(command=self.menu_control.create_preview_setting_menu)
         
         # 索引设置项
         self.index_dataset_table.bind("<Double-Button-1>", self.menu_control.double_click_open_file)
@@ -136,8 +73,6 @@ class CoreControl(WinGUI):
         self.theme_combobox.bind("<<ComboboxSelected>>", lambda e: self.__change_theme())
         self.open_setting_file_button.config(command=lambda: FileOperation.open_file(Setting.config_path))
         self.open_repertory_button.config(command=lambda: webbrowser.open(r"https://github.com/Just-A-Freshman/VimgFind"))
-        self.backup_button.config(command=self.backup_database)
-        self.restore_button.config(command=self.restore_database)
 
         # 全局事件处理
         self.drop_target_register(DND_FILES)
@@ -172,15 +107,6 @@ class CoreControl(WinGUI):
         except Exception:
             self.device_info_label.config(text="推理设备：未知")
 
-    def __init_settings_bar(self) -> None:
-        threshold = self.setting.get_config("function", "similarity_threshold")
-        self.similarity_scale.set(int(threshold * 100))
-        self.similarity_label.config(text=f"相似度: {int(threshold * 100)}%")
-        max_count = self.setting.get_config("index", "max_match_count")
-        self.result_count_entry.delete(0, tk.END)
-        self.result_count_entry.insert(0, str(max_count))
-        self.similarity_scale.configure(state=tk.DISABLED)
-
     def __change_theme(self, setting_theme=False) -> None:
         style = Style()
         if setting_theme:
@@ -193,7 +119,7 @@ class CoreControl(WinGUI):
         # 配置特殊Style
         style.theme_use(theme_cbo_value)
         style.configure('TNotebook.Tab', font=('微软雅黑', 12))
-        style.configure("Treeview", rowheight=55)
+        style.configure("Treeview", rowheight=50)
 
     def __on_drop(self, event: TkinterDnD.DnDEvent) -> None:
         file_paths_str: str = getattr(event, "data")
@@ -206,62 +132,58 @@ class CoreControl(WinGUI):
                 self.index_table_control.add_search_dir(dir_path)
 
     def __on_search_entry_drop(self, event: TkinterDnD.DnDEvent) -> None:
-        """搜索输入框拖放图片文件"""
+        """搜索输入框拖放图片文件（不显示路径在搜索框）"""
         file_paths_str: str = getattr(event, "data")
         file_paths = FileOperation.extract_file_paths(file_paths_str)
         if file_paths:
             self.search_control.search_by_browser(file_paths[0])
 
     def __on_search_entry_paste(self, event: tk.Event) -> None:
-        """搜索输入框 Ctrl+V：如果粘贴内容包含图片路径则自动搜索"""
+        """搜索框 Ctrl+V/Win+V 粘贴：检测图片路径或图片数据，自动搜索"""
         self.after_idle(self._do_search_entry_paste)
 
     def _do_search_entry_paste(self) -> None:
-        """检查粘贴后的输入框内容是否为图片路径，是则触发搜索"""
-        text = self.search_entry.get().strip()
-        if not text:
+        """检查剪贴板：1.CF_HDROP文件路径 2.CF_DIB图片数据 3.CF_UNICODETEXT文本路径。搜索后焦点回到搜索框"""
+        self.search_entry.delete(0, tk.END)
+        try:
+            win32clipboard.OpenClipboard()
+        except Exception:
+            self.search_entry.focus_set()
             return
-        path = Path(text)
-        if path.is_file() and path.suffix.lower() in Setting.accepted_exts:
-            self.search_control.search_by_browser(text)
+        try:
+            # 1. 优先检查文件路径（CF_HDROP）
+            if win32clipboard.IsClipboardFormatAvailable(win32con.CF_HDROP):
+                hdrop = win32clipboard.GetClipboardData(win32con.CF_HDROP)
+                df = DROPFILES.from_buffer_copy(hdrop[:ctypes.sizeof(DROPFILES)])
+                data = hdrop[df.pFiles:]
+                paths_str = data.decode("utf-16le", errors="replace").strip("\0")
+                paths = [p for p in paths_str.split("\0") if p.strip()]
+                if paths:
+                    first_path = paths[0]
+                    if Path(first_path).suffix.lower() in Setting.accepted_exts:
+                        self.search_control.search_by_browser(first_path)
+                        return
+            # 2. 文本路径（CF_UNICODETEXT）
+            if win32clipboard.IsClipboardFormatAvailable(win32con.CF_UNICODETEXT):
+                text = win32clipboard.GetClipboardData(win32con.CF_UNICODETEXT).strip()
+                if text:
+                    path = Path(text)
+                    if path.is_file() and path.suffix.lower() in Setting.accepted_exts:
+                        self.search_control.search_by_browser(text)
+                        return
+        except Exception:
+            pass
+        finally:
+            win32clipboard.CloseClipboard()
+        # 3. 图片位图数据（CF_DIB）—— 必须在关闭外层剪贴板之后，由内部方法自行 Open/Close
+        image_obj = ImageOperation.get_clipboard_image_bytes()
+        if image_obj is not None:
+            self.search_control.search_image_by_clipboard()
+        self.search_entry.focus_set()
 
     def __schedule_save(self) -> None:
         self.search_tools.save_index()
         self.after(self.setting.schedule_save_interval, self.__schedule_save)
-
-    def __daily_backup(self) -> None:
-        self.backup_manager.cleanup()
-        if not self.backup_manager.today_backup_path().exists():
-            self.backup_manager.backup()
-
-    def backup_database(self) -> None:
-        success = self.backup_manager.backup()
-        if success:
-            messagebox.showinfo("提示", "数据库备份成功！")
-        else:
-            messagebox.showwarning("警告", "数据库备份失败，请检查索引文件是否存在。")
-
-    def restore_database(self) -> None:
-        backup_list = self.backup_manager.get_backup_list()
-        if not backup_list:
-            messagebox.showinfo("提示", "没有可用的备份文件。")
-            return
-        dialog = RestoreDialog(self, backup_list)
-        if dialog.result is None:
-            return
-        self.search_tools.stop_update_index()
-        try:
-            self.search_tools.save_index()
-            success = self.backup_manager.restore(dialog.result)
-            if success:
-                self.search_tools.reset_index()
-                messagebox.showinfo("提示", f"已从 {dialog.result} 恢复数据库，请重启程序使更改生效。")
-            else:
-                messagebox.showerror("错误", "数据库恢复失败。")
-        except Exception as e:
-            messagebox.showerror("错误", f"恢复过程中发生错误：{e}")
-        finally:
-            self.search_tools.continue_update_index()
     
     def destroy(self) -> None:
         try:
@@ -272,7 +194,6 @@ class CoreControl(WinGUI):
             self.setting.clean_log()
             self.search_tools.destroy()
             self.search_tools.save_index()
-            self.backup_manager.backup()
             FileOperation.clear_folder_all(Setting.temp_image_path)
             self.search_tools.set_force_end_update(True)
         except Exception as e:
@@ -291,13 +212,6 @@ class SearchControl(object):
         self._switching_mode: bool = False
         self.core_control = core_control
 
-    def on_search_mode_changed(self, *_) -> None:
-        self._is_name_search = self.core_control._search_mode_var.get()
-        if self._is_name_search:
-            self.core_control.similarity_scale.configure(state=tk.DISABLED)
-        else:
-            self.core_control.similarity_scale.configure(state=tk.NORMAL)
-
     @Decorator.send_task
     def search_by_browser(self, image_path: str | None = None) -> None:
         if image_path is not None and not Path(image_path).is_file():
@@ -308,8 +222,6 @@ class SearchControl(object):
             )
             if not image_path:
                 return
-        self.core_control.after(0, lambda: self.core_control.search_entry.delete(0, tk.END))
-        self.core_control.after(0, lambda p=image_path: self.core_control.search_entry.insert(0, p))
         image_obj = ImageOperation.get_image_obj(image_path)
         if image_obj is None:
             messagebox.showwarning("警告", "无法识别该图片类型！")
@@ -407,6 +319,18 @@ class SearchControl(object):
                 first_item = item
         if first_item is not None:
             self.core_control.preview_view.selection_set(first_item)
+            return
+        first_img_path, first_sim = first_result
+        if Path(first_img_path).exists():
+            first_extra_info = self.generate_extra_info(first_img_path, first_sim)
+            item = self.core_control.preview_view.append_result(first_img_path, *first_extra_info)
+            self.core_control.preview_view.selection_set(item)
+        
+        for img_path, similarity in results:
+            if Path(img_path).exists():
+                extra_info = self.generate_extra_info(img_path, similarity)
+                self.core_control.preview_view.append_result(img_path, *extra_info)
+        self._is_finish_search = True
 
     def generate_extra_info(self, image_path: str, similarity: float) -> tuple:
         image_path_obj = Path(image_path)
@@ -419,33 +343,10 @@ class SearchControl(object):
         return content
 
     def set_preview_result_count(self, max_match_count: int) -> None:
-        self.core_control.setting.modity_config("index", "max_match_count", max_match_count)
+        self.core_control.setting.modity_config("index", "max_match_count", min(max_match_count, 100))
         self.core_control.search_tools.update_max_match_count(max_match_count)
-        self._re_search()
-
-    @Decorator.send_task
-    def _re_search(self) -> None:
         if self._last_search_content:
             self.__search_image(self._last_search_content)
-
-    def set_preview_result_count_from_entry(self, event: tk.Event | None = None) -> None:
-        try:
-            count = int(self.core_control.result_count_entry.get().strip())
-            if count < 1:
-                count = 1
-            self.set_preview_result_count(count)
-        except ValueError:
-            self.core_control.result_count_entry.delete(0, tk.END)
-            self.core_control.result_count_entry.insert(0, str(
-                self.core_control.setting.get_config("index", "max_match_count")
-            ))
-
-    def set_similarity_threshold(self, value: str) -> None:
-        threshold = int(float(value)) / 100
-        self.core_control.similarity_label.config(text=f"相似度: {int(float(value))}%")
-        self.core_control.setting.modity_config("function", "similarity_threshold", threshold)
-        self.core_control.search_tools.update_similarity_threshold(threshold)
-        self._re_search()
 
     def set_preview_mode(self, mode: Literal["detail_info", "medium_ico"]) -> None:
         self._switching_mode = True
@@ -468,12 +369,6 @@ class SearchControl(object):
             self.core_control.preview_view.append_result(img_path, *extra_info)
         self.core_control.preview_view.selection_set(*current_selection)
         self._switching_mode = False
-
-    def sort_results(self, *_) -> None:
-        view = self.core_control.preview_view
-        if isinstance(view, ThumbnailGridView):
-            sort_key = self.core_control.sort_combo.get()
-            view.sort_results(sort_key)
 
     def preview_found_image(self, event: tk.Event) -> None:
         if self._switching_mode:
@@ -563,9 +458,6 @@ class IndexTableControl(object):
             command=lambda: self.core_control.search_tools.set_force_end_update(True)
         )
         self._is_updating = True
-        self.core_control.index_progress_bar.grid()
-        self.core_control.index_progress_bar.config(value=0)
-        self.core_control.index_progress_label.config(text="准备中...")
         self.__check_queue()
         self.core_control.search_tools.remove_nonexists()
         for image_dir in self.core_control.setting.get_config("index", "search_dir"):
@@ -577,8 +469,6 @@ class IndexTableControl(object):
         self.core_control.update_index_button.config(text="更新索引目录", command=self.sync_index)
         self.core_control.delete_index_button.config(state=tk.ACTIVE)
         self.core_control.rebuild_index_button.config(state=tk.ACTIVE)
-        self.core_control.index_progress_bar.grid_remove()
-        self.core_control.index_progress_label.config(text="")
         if show_message:
             messagebox.showinfo("提示", "索引更新完成！")
         self.core_control.after(1000, self.update_index_tip)
@@ -617,15 +507,6 @@ class IndexTableControl(object):
                 last_message = Decorator.progress_queue.get_nowait()
         except Empty:
             pass
-        if last_message:
-            self.core_control.index_tip_label.config(text=last_message)
-            match = re.search(r"\((\d+\.?\d*)%\)", last_message)
-            if match:
-                percent = float(match.group(1))
-                self.core_control.index_progress_bar.config(value=percent)
-                self.core_control.index_progress_label.config(text=f"{percent:.1f}%")
-            else:
-                self.core_control.index_progress_label.config(text=last_message)
         if self._is_updating:
             self.core_control.after(200, self.__check_queue)
 
@@ -636,18 +517,11 @@ class MenuControl(object):
     PHOTOSHOP_EXE_NAMES = ("Photoshop.exe", "photoshop.exe")
     PHOTOSHOP_COMMON_PATHS = tuple(
         Path("C:/Program Files/Adobe") / f"Adobe Photoshop {year}" / "Photoshop.exe"
-        for year in range(2030, 2018, -1)
-    ) + (
-        Path("C:/Program Files (x86)/Adobe/Adobe Photoshop") / "Photoshop.exe",
+        for year in range(2026, 2018, -1)
     )
 
     def __init__(self, core_control: CoreControl) -> None:
         self.core_control = core_control
-        # 程序启动时自动检测并更新PS路径
-        self.photoshop_path = self._detect_photoshop_path()
-        if self.photoshop_path:
-            self.core_control.setting.modity_config("function", "photoshop_path", str(self.photoshop_path))
-            self.core_control.setting.save_settings()
 
     def __get_selected_result_files(self) -> list[Path]:
         selected_items = self.core_control.preview_view.selection()
@@ -700,97 +574,25 @@ class MenuControl(object):
             messagebox.showinfo("提示", "文件不存在！")
 
     def open_with_photoshop(self, file_path: Path) -> None:
-        if self.photoshop_path and self.photoshop_path.exists():
+        for exe_name in self.PHOTOSHOP_EXE_NAMES:
             try:
-                subprocess.Popen([str(self.photoshop_path), str(file_path)])
+                subprocess.Popen([exe_name, str(file_path)])
                 return
+            except FileNotFoundError:
+                pass
             except Exception as e:
                 messagebox.showerror("错误", f"打开 Photoshop 失败：{e}")
                 return
-        # 缓存失效，重新检测
-        self.photoshop_path = self._detect_photoshop_path()
-        if self.photoshop_path:
+        for exe_path in self.PHOTOSHOP_COMMON_PATHS:
+            if not exe_path.exists():
+                continue
             try:
-                subprocess.Popen([str(self.photoshop_path), str(file_path)])
-                self.core_control.setting.modity_config("function", "photoshop_path", str(self.photoshop_path))
-                self.core_control.setting.save_settings()
+                subprocess.Popen([str(exe_path), str(file_path)])
                 return
             except Exception as e:
                 messagebox.showerror("错误", f"打开 Photoshop 失败：{e}")
                 return
         messagebox.showinfo("提示", "未找到 Photoshop，请确认已安装或将 Photoshop 加入 PATH。")
-
-    def _detect_photoshop_path(self) -> Path | None:
-        """自动检测 Photoshop 安装路径，优先级：注册表 > 配置文件 > 常见路径 > 进程名"""
-        # 1. 注册表：App Paths 键（最可靠）
-        try:
-            import winreg
-            for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
-                try:
-                    with winreg.OpenKey(hive, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\Photoshop.exe") as key:
-                        ps_path = Path(winreg.QueryValue(key, None))
-                        if ps_path.exists():
-                            return ps_path
-                except OSError:
-                    pass
-        except Exception:
-            pass
-
-        # 2. 注册表：Adobe Photoshop 版本键
-        try:
-            import winreg
-            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Adobe\Photoshop") as ps_key:
-                i = 0
-                while True:
-                    try:
-                        version = winreg.EnumKey(ps_key, i)
-                        try:
-                            with winreg.OpenKey(ps_key, version) as ver_key:
-                                app_path = winreg.QueryValueEx(ver_key, "ApplicationPath")[0]
-                                ps_path = Path(app_path) / "Photoshop.exe"
-                                if ps_path.exists():
-                                    return ps_path
-                        except OSError:
-                            pass
-                        i += 1
-                    except OSError:
-                        break
-        except Exception:
-            pass
-
-        # 3. 从配置文件读取上次缓存的路径
-        try:
-            cached = Path(self.core_control.setting.get_config("function", "photoshop_path"))
-            if cached.exists():
-                return cached
-        except Exception:
-            pass
-
-        # 4. 常见安装路径
-        for ps_path in self.PHOTOSHOP_COMMON_PATHS:
-            if ps_path.exists():
-                return ps_path
-
-        # 5. 通过进程名查找（最后兜底）
-        try:
-            result = subprocess.run(
-                ['tasklist', '/fi', 'imagename eq Photoshop.exe', '/fo', 'csv', '/nh'],
-                capture_output=True, text=True, timeout=5
-            )
-            if 'Photoshop.exe' in result.stdout:
-                for exe_name in self.PHOTOSHOP_EXE_NAMES:
-                    try:
-                        which = subprocess.run(['where', exe_name], capture_output=True, text=True, timeout=5)
-                        if which.returncode == 0 and which.stdout.strip():
-                            ps_path = Path(which.stdout.strip().split('\n')[0])
-                            if ps_path.exists():
-                                return ps_path
-                    except Exception:
-                        pass
-        except Exception:
-            pass
-
-        return None
 
     def __get_item_files(self, event: tk.Event, preview_widget: BasicImagePreviewView) -> list[Path]:
         selected_items = preview_widget.selection()
@@ -842,6 +644,25 @@ class MenuControl(object):
             menu.add_command(label=label, command=cmd, compound=tk.LEFT)
         
         menu.post(event.x_root, event.y_root)
+        menu.bind("<Unmap>", lambda e: menu.destroy())
+
+    def create_preview_setting_menu(self) -> None:
+        btn = self.core_control.more_options_button
+        menu = tk.Menu(tearoff=0, activeborderwidth=self.ACTIVE_BORDER_WIDTH)
+        menu.add_command(label="详情模式", command=lambda: self.core_control.search_control.set_preview_mode("detail_info"))
+        menu.add_command(label="图标模式", command=lambda: self.core_control.search_control.set_preview_mode("medium_ico"))
+        menu.add_separator()
+        menu.add_command(label="结果数: 10", command=lambda: self.core_control.search_control.set_preview_result_count(10))
+        menu.add_command(label="结果数: 30", command=lambda: self.core_control.search_control.set_preview_result_count(30))
+        menu.add_command(label="结果数: 50", command=lambda: self.core_control.search_control.set_preview_result_count(50))
+        menu.add_command(label="结果数: 100", command=lambda: self.core_control.search_control.set_preview_result_count(100))
+        menu.add_separator()
+        menu.add_command(label="过滤器", command=lambda: None)
+        menu.add_command(label="清理过滤", command=lambda: None)
+        menu.post(
+            btn.winfo_rootx() + WinInfo.TkS(btn.winfo_width() - menu.winfo_screenmmwidth(), restore=True), 
+            btn.winfo_rooty() + WinInfo.TkS(25)
+        )
         menu.bind("<Unmap>", lambda e: menu.destroy())
 
     def double_click_open_file(self, event: tk.Event, widget = None) -> None:

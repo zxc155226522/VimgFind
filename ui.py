@@ -22,6 +22,7 @@ class WinGUI(TkinterDnD.Tk):
         self.switch_tab = self.__set_switch_tab(self)
         self.search_entry = self.__set_search_entry(self.search_tab)
         self.search_btn = self.__set_search_button(self.search_tab)
+        self.more_options_button = self.__set_more_options_button(self.search_tab)
         self.search_by_browser_btn = self.__set_search_by_browser_button(self.search_tab)
         self.search_by_clipboard_btn = self.__set_search_by_clipboard_button(self.search_tab)
         self.search_setting_bar = self.__set_search_setting_bar(self.search_tab)
@@ -91,6 +92,11 @@ class WinGUI(TkinterDnD.Tk):
     def __set_search_button(self, parent) -> Button:
         btn = Button(parent, text="搜索", takefocus=False, bootstyle="primary")
         btn.place(relx=0.295, rely=0.007, relwidth=0.08, relheight=0.038)
+        return btn
+
+    def __set_more_options_button(self, parent) -> Button:
+        btn = Button(parent, text="更多选项", takefocus=False,)
+        btn.place(relx=0.605, rely=0.007, relwidth=0.1, relheight=0.038)
         return btn
 
     def __set_search_by_browser_button(self, parent) -> Button:
