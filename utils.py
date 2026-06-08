@@ -341,6 +341,7 @@ LoaderResult = namedtuple("LoaderResult", ["item", "size", "photo", "error"])
 class ImageLoader:
     THUMB_CACHE_DIR = Path("./temp/thumbnails")
     MAX_CACHE_SIZE = 200 * 1024 * 1024
+    THUMBNAIL_FILE_SIZE_LIMIT = 3 * 1024 * 1024
 
     def __init__(self) -> None:
         self.THUMB_CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -414,8 +415,12 @@ class ImageLoader:
                 continue
 
             raw_size = (0, 0)
-            cache_key = self._get_cache_key(image_path, thumbnail_size)
-            cached_photo = self._check_cache(image_path, cache_key)
+            try:
+                use_thumbnail = os.path.getsize(image_path) > self.THUMBNAIL_FILE_SIZE_LIMIT
+            except OSError:
+                use_thumbnail = True
+            cache_key = self._get_cache_key(image_path, thumbnail_size) if use_thumbnail else ""
+            cached_photo = self._check_cache(image_path, cache_key) if use_thumbnail else None
             if cached_photo is not None:
                 img = ImageOperation.get_image_obj(image_path)
                 if img is not None:
@@ -434,10 +439,12 @@ class ImageLoader:
             else:
                 try:
                     raw_size = img.size
-                    img.thumbnail((thumbnail_size, thumbnail_size))
+                    if use_thumbnail:
+                        img.thumbnail((thumbnail_size, thumbnail_size))
                     img = ImageOps.exif_transpose(img)
                     photo = ImageTk.PhotoImage(img)
-                    self._save_to_cache(img, cache_key)
+                    if use_thumbnail:
+                        self._save_to_cache(img, cache_key)
                     self.result_queue.put(LoaderResult(
                         item=item,
                         size=raw_size, 

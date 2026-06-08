@@ -32,6 +32,8 @@ class CoreControl(WinGUI):
         self.setting = Setting()
         self.__change_theme(setting_theme=True)
         self.search_tools = SearchTool(self.setting)
+        self.result_count_entry.delete(0, tk.END)
+        self.result_count_entry.insert(0, str(self.setting.get_config("index", "max_match_count") or 100))
         self.index_table_control = IndexTableControl(self)
         self.search_control = SearchControl(self)
         self.menu_control = MenuControl(self)
@@ -60,7 +62,8 @@ class CoreControl(WinGUI):
         self.search_btn.config(command=lambda: self.search_control.search_image_by_text())
         self.search_entry.bind("<<Paste>>", self.__on_search_entry_paste)
         self.search_entry.bind("<FocusOut>", lambda e: self.after(50, self.search_entry.focus_set))
-        self.more_options_button.config(command=self.menu_control.create_preview_setting_menu)
+        self.result_count_entry.bind("<Return>", self.search_control.apply_result_count_from_entry)
+        self.result_count_entry.bind("<FocusOut>", self.search_control.apply_result_count_from_entry)
         
         # 索引设置项
         self.index_dataset_table.bind("<Double-Button-1>", self.menu_control.double_click_open_file)
@@ -342,10 +345,22 @@ class SearchControl(object):
         return content
 
     def set_preview_result_count(self, max_match_count: int) -> None:
-        self.core_control.setting.modity_config("index", "max_match_count", min(max_match_count, 100))
+        max_match_count = max(1, min(max_match_count, 100))
+        self.core_control.setting.modity_config("index", "max_match_count", max_match_count)
         self.core_control.search_tools.update_max_match_count(max_match_count)
+        self.core_control.result_count_entry.delete(0, tk.END)
+        self.core_control.result_count_entry.insert(0, str(max_match_count))
         if self._last_search_content:
             self.__search_image(self._last_search_content)
+
+    def apply_result_count_from_entry(self, event: tk.Event | None = None) -> None:
+        raw_count = self.core_control.result_count_entry.get().strip()
+        if not raw_count.isdigit():
+            current_count = self.core_control.setting.get_config("index", "max_match_count") or 100
+            self.core_control.result_count_entry.delete(0, tk.END)
+            self.core_control.result_count_entry.insert(0, str(current_count))
+            return
+        self.set_preview_result_count(int(raw_count))
 
     def set_preview_mode(self, mode: Literal["detail_info", "medium_ico"]) -> None:
         self._switching_mode = True
@@ -643,25 +658,6 @@ class MenuControl(object):
             menu.add_command(label=label, command=cmd, compound=tk.LEFT)
         
         menu.post(event.x_root, event.y_root)
-        menu.bind("<Unmap>", lambda e: menu.destroy())
-
-    def create_preview_setting_menu(self) -> None:
-        btn = self.core_control.more_options_button
-        menu = tk.Menu(tearoff=0, activeborderwidth=self.ACTIVE_BORDER_WIDTH)
-        menu.add_command(label="详情模式", command=lambda: self.core_control.search_control.set_preview_mode("detail_info"))
-        menu.add_command(label="图标模式", command=lambda: self.core_control.search_control.set_preview_mode("medium_ico"))
-        menu.add_separator()
-        menu.add_command(label="结果数: 10", command=lambda: self.core_control.search_control.set_preview_result_count(10))
-        menu.add_command(label="结果数: 30", command=lambda: self.core_control.search_control.set_preview_result_count(30))
-        menu.add_command(label="结果数: 50", command=lambda: self.core_control.search_control.set_preview_result_count(50))
-        menu.add_command(label="结果数: 100", command=lambda: self.core_control.search_control.set_preview_result_count(100))
-        menu.add_separator()
-        menu.add_command(label="过滤器", command=lambda: None)
-        menu.add_command(label="清理过滤", command=lambda: None)
-        menu.post(
-            btn.winfo_rootx() + WinInfo.TkS(btn.winfo_width() - menu.winfo_screenmmwidth(), restore=True), 
-            btn.winfo_rooty() + WinInfo.TkS(25)
-        )
         menu.bind("<Unmap>", lambda e: menu.destroy())
 
     def double_click_open_file(self, event: tk.Event, widget = None) -> None:

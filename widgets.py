@@ -243,6 +243,7 @@ class PreviewCanvasView(BasicImagePreviewView):
 
 class DetailListView(BasicImagePreviewView):
     THUMB_SIZE = 40
+    THUMBNAIL_FILE_SIZE_LIMIT = 3 * 1024 * 1024
 
     def __init__(self, parent: tk.Widget, extra_columns: dict[str, int]) -> None:
         super().__init__(parent)
@@ -299,7 +300,8 @@ class DetailListView(BasicImagePreviewView):
                 return
             try:
                 img = Image.open(image_path)
-                img.thumbnail((self.THUMB_SIZE, self.THUMB_SIZE))
+                if os.path.getsize(image_path) > self.THUMBNAIL_FILE_SIZE_LIMIT:
+                    img.thumbnail((self.THUMB_SIZE, self.THUMB_SIZE))
                 img = ImageOps.exif_transpose(img)
                 photo = ImageTk.PhotoImage(img)
                 self._thumbnail_cache[iid] = photo
@@ -363,7 +365,8 @@ class ThumbnailGridView(BasicImagePreviewView):
     """
     THUMBNAIL_SIZE: int = WinInfo.TkS(150)
     MARGIN: int = WinInfo.TkS(10)
-    FONT_HEGIHT: int = WinInfo.TkS(32)
+    FONT_HEGIHT: int = WinInfo.TkS(48)
+    TEXT_BOTTOM_PAD: int = WinInfo.TkS(8)
     BUTTON_HEIGHT: int = WinInfo.TkS(30)
     BUTTON_GAP: int = WinInfo.TkS(4)
     PRELOAD_ROWS: int = 3
@@ -532,9 +535,8 @@ class ThumbnailGridView(BasicImagePreviewView):
         self._scroll_to_item(target_item, event)
 
     def _scroll_to_item(self, item: str, event: tk.Event) -> None:
-        _, y = self._get_item_position(item)
+        _, y, _, item_y2 = self._get_item_bounds(item)
         item_y1 = y
-        item_y2 = y + self.THUMBNAIL_SIZE + self.FONT_HEGIHT
         canvas_y1 = self._canvas.canvasy(0)
         canvas_y2 = canvas_y1 + self._canvas.winfo_height()
         total_height = self._canvas.bbox(tk.ALL)[3] if self._canvas.bbox(tk.ALL) else 1
@@ -644,6 +646,19 @@ class ThumbnailGridView(BasicImagePreviewView):
             index = self._canvas_items[item]["pos_index"]
         return index
 
+    def _get_item_height(self) -> int:
+        return self.THUMBNAIL_SIZE + self.MARGIN + self.FONT_HEGIHT + self.TEXT_BOTTOM_PAD + self.BUTTON_GAP + self.BUTTON_HEIGHT
+
+    def _get_text_y(self, item_y: int) -> int:
+        return item_y + self.THUMBNAIL_SIZE + self.MARGIN // 2
+
+    def _get_button_y(self, item_y: int) -> int:
+        return self._get_text_y(item_y) + self.FONT_HEGIHT + self.TEXT_BOTTOM_PAD
+
+    def _get_item_bounds(self, item: str) -> tuple[int, int, int, int]:
+        x, y = self._get_item_position(item)
+        return (x, y, x + self.THUMBNAIL_SIZE, y + self._get_item_height())
+
     def _create_placeholder(self, item: str) -> None:
         x, y = self._get_item_position(item)
         filename = os.path.basename(self._results[item][0])
@@ -657,7 +672,7 @@ class ThumbnailGridView(BasicImagePreviewView):
             text_tags += ("search_highlight",)
         image_info_id = self._canvas.create_text(
             x + self.THUMBNAIL_SIZE // 2, 
-            y + self.THUMBNAIL_SIZE + self.MARGIN // 2,
+            self._get_text_y(y),
             text=filename, fill=text_fill, tags=text_tags,
             anchor=tk.N, width=self.THUMBNAIL_SIZE
         )
@@ -789,7 +804,7 @@ class ThumbnailGridView(BasicImagePreviewView):
             return
         x, y = self._get_item_position(item)
         tip_x = x + self.THUMBNAIL_SIZE // 2
-        tip_y = y + self.THUMBNAIL_SIZE + self.MARGIN // 2 + self.FONT_HEGIHT + 20
+        tip_y = self._get_button_y(y) + self.BUTTON_HEIGHT + self.BUTTON_GAP + 12
         tooltip_id = self._canvas.create_text(
             tip_x, tip_y, text="已复制", fill="white",
             font=("微软雅黑", 9)
@@ -816,7 +831,7 @@ class ThumbnailGridView(BasicImagePreviewView):
         labels = (("copy_image", "复制图"), ("copy_path", "路径"), ("open_ps", "PS"))
         total_gap = self.BUTTON_GAP * (len(labels) - 1)
         button_width = (self.THUMBNAIL_SIZE - total_gap) // len(labels)
-        button_y1 = y + self.THUMBNAIL_SIZE + self.FONT_HEGIHT + self.BUTTON_GAP
+        button_y1 = self._get_button_y(y)
         button_y2 = button_y1 + self.BUTTON_HEIGHT
         action_ids = []
         item_areas: dict[str, tuple] = {}
@@ -845,6 +860,10 @@ class ThumbnailGridView(BasicImagePreviewView):
             action_ids.extend((rect_id, text_id))
             item_areas[action] = (button_x1, button_y1, button_x2, button_y2)
         canvas_item["action_ids"] = action_ids
+        border_id = canvas_item.get("border_id", "")
+        if border_id:
+            for action_id in action_ids:
+                self._canvas.tag_raise(action_id, border_id)
         self._button_areas[item] = item_areas
 
     def _identify_action(self, event: tk.Event) -> tuple[str, str] | None:
@@ -878,13 +897,15 @@ class ThumbnailGridView(BasicImagePreviewView):
             return
         if canvas_item.get("border_id", ""):
             return
-        x, y = self._get_item_position(item)
+        x, y, x2, y2 = self._get_item_bounds(item)
         border_id = self._canvas.create_rectangle(
-            x - 4, y - 4, x + self.THUMBNAIL_SIZE + 4, y + self.THUMBNAIL_SIZE + 4,
+            x - 4, y - 4, x2 + 4, y2 + 4,
             fill=self.theme_color.selectbg
         )
         canvas_item["border_id"] = border_id
         self._canvas.tag_lower(border_id)
+        for action_id in canvas_item.get("action_ids", []):
+            self._canvas.tag_raise(action_id, border_id)
 
     def _update_layout(self) -> None:
         canvas_width = self._canvas.winfo_width()
@@ -892,7 +913,7 @@ class ThumbnailGridView(BasicImagePreviewView):
 
         old_thumb_size = self.THUMBNAIL_SIZE
         # 固定5列，缩略图大小根据窗口宽度自动计算
-        available_width = max(canvas_width - self.MARGIN * 2, self.MIN_THUMB_SIZE)
+        available_width = max(canvas_width - self.MARGIN * 2 - 20, self.MIN_THUMB_SIZE)
         self._cols = 5
         self._h_gap = self.MARGIN
         self.THUMBNAIL_SIZE = max(
@@ -910,7 +931,8 @@ class ThumbnailGridView(BasicImagePreviewView):
 
                 border_id = canvas_item.get("border_id", "")
                 if border_id:
-                    self._canvas.coords(border_id, x - 4, y - 4, x + self.THUMBNAIL_SIZE + 4, y + self.THUMBNAIL_SIZE + 4)
+                    x1, y1, x2, y2 = self._get_item_bounds(item)
+                    self._canvas.coords(border_id, x1 - 4, y1 - 4, x2 + 4, y2 + 4)
 
                 placeholder_id = canvas_item.get("placeholder_id", "")
                 if placeholder_id:
@@ -918,7 +940,7 @@ class ThumbnailGridView(BasicImagePreviewView):
                         self._canvas.coords(placeholder_id, x + self.THUMBNAIL_SIZE // 2, y + self.THUMBNAIL_SIZE // 2)
                     except tk.TclError:
                         pass
-                self._canvas.coords(canvas_item["image_info_id"],  x + self.THUMBNAIL_SIZE // 2, y + self.THUMBNAIL_SIZE + self.MARGIN // 2)
+                self._canvas.coords(canvas_item["image_info_id"],  x + self.THUMBNAIL_SIZE // 2, self._get_text_y(y))
                 self._canvas.itemconfig(canvas_item["image_info_id"], width=self.THUMBNAIL_SIZE)
                 self._create_action_buttons(item)
 
@@ -927,7 +949,7 @@ class ThumbnailGridView(BasicImagePreviewView):
             self._loading_tasks.clear()
             self._load_visible_images()
 
-        item_height = self.THUMBNAIL_SIZE + self.MARGIN + self.FONT_HEGIHT + self.BUTTON_HEIGHT + self.BUTTON_GAP
+        item_height = self._get_item_height()
         rows = math.ceil(len(self._results) / self._cols) if self._cols > 0 else 0
         total_height = rows * item_height + self.MARGIN * 2 if rows > 0 else 0
         if total_height > canvas_height:
@@ -945,7 +967,7 @@ class ThumbnailGridView(BasicImagePreviewView):
         col = index % self._cols
         
         item_width = self.THUMBNAIL_SIZE + self._h_gap
-        item_height = self.THUMBNAIL_SIZE + self.MARGIN + self.FONT_HEGIHT + self.BUTTON_HEIGHT + self.BUTTON_GAP
+        item_height = self._get_item_height()
         
         x = col * item_width + self.MARGIN + self.MARGIN // 2
         y = row * item_height + self.MARGIN + self.MARGIN // 2
@@ -958,7 +980,7 @@ class ThumbnailGridView(BasicImagePreviewView):
         
         canvas_y1 = self._canvas.canvasy(0)
         canvas_y2 = canvas_y1 + self._canvas.winfo_height()
-        item_height = self.THUMBNAIL_SIZE + self.MARGIN + self.FONT_HEGIHT + self.BUTTON_HEIGHT + self.BUTTON_GAP
+        item_height = self._get_item_height()
         
         start_row = max(0, canvas_y1 // item_height - self.PRELOAD_ROWS)
         end_row = min(math.ceil(len(self._results) / self._cols), canvas_y2 // item_height + self.PRELOAD_ROWS)
@@ -1094,9 +1116,8 @@ class ThumbnailGridView(BasicImagePreviewView):
         y = self._canvas.canvasy(event.y)
         clicked_item = ""
         for item in self._results:
-            item_x, item_y = self._get_item_position(item)
-            if (item_x <= x <= item_x + self.THUMBNAIL_SIZE and
-                item_y <= y <= item_y + self.THUMBNAIL_SIZE):
+            item_x1, item_y1, item_x2, item_y2 = self._get_item_bounds(item)
+            if item_x1 <= x <= item_x2 and item_y1 <= y <= item_y2:
                 clicked_item = item
                 break
         return clicked_item

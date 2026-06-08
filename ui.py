@@ -22,7 +22,6 @@ class WinGUI(TkinterDnD.Tk):
         self.switch_tab = self.__set_switch_tab(self)
         self.search_entry = self.__set_search_entry(self.search_tab)
         self.search_btn = self.__set_search_button(self.search_tab)
-        self.more_options_button = self.__set_more_options_button(self.search_tab)
         self.search_by_browser_btn = self.__set_search_by_browser_button(self.search_tab)
         self.search_by_clipboard_btn = self.__set_search_by_clipboard_button(self.search_tab)
         self.search_setting_bar = self.__set_search_setting_bar(self.search_tab)
@@ -94,11 +93,6 @@ class WinGUI(TkinterDnD.Tk):
         btn.place(relx=0.295, rely=0.007, relwidth=0.08, relheight=0.038)
         return btn
 
-    def __set_more_options_button(self, parent) -> Button:
-        btn = Button(parent, text="更多选项", takefocus=False,)
-        btn.place(relx=0.605, rely=0.007, relwidth=0.1, relheight=0.038)
-        return btn
-
     def __set_search_by_browser_button(self, parent) -> Button:
         btn = Button(parent, text="浏览", takefocus=False,)
         btn.place(relx=0.385, rely=0.007, relwidth=0.1, relheight=0.038)
@@ -135,8 +129,8 @@ class WinGUI(TkinterDnD.Tk):
         self.sort_combo = Combobox(bar, values=("相似度", "文件名", "大小", "修改时间"), state="readonly", width=8)
         self.sort_combo.place(relx=0.62, rely=0.15, relwidth=0.10, relheight=0.7)
 
-        # 显示数量
-        self.result_count_label = Label(bar, text="数量:")
+        # 结果数量输入
+        self.result_count_label = Label(bar, text="输入:")
         self.result_count_label.place(relx=0.73, rely=0.2, relwidth=0.04, relheight=0.6)
 
         self.result_count_entry = Entry(bar)
