@@ -8,6 +8,19 @@ import numpy as np
 import onnxruntime as ort
 
 
+_GPU_PRIORITY = [
+    'DmlExecutionProvider',       # DirectML - 支持所有品牌GPU (NVIDIA/AMD/Intel)
+    'CUDAExecutionProvider',      # CUDA - 仅NVIDIA GPU
+    'TensorrtExecutionProvider',  # TensorRT - 仅NVIDIA GPU
+]
+
+_GPU_PROVIDER_LABELS = {
+    'DmlExecutionProvider': 'DirectML (GPU)',
+    'CUDAExecutionProvider': 'CUDA (NVIDIA GPU)',
+    'TensorrtExecutionProvider': 'TensorRT (NVIDIA GPU)',
+    'OpenVINOExecutionProvider': 'OpenVINO (Intel)',
+    'CoreMLExecutionProvider': 'CoreML (Apple)',
+}
 
 class MultiModalEncoder:
     def __init__(
@@ -28,8 +41,20 @@ class MultiModalEncoder:
         self.__normalization = normalization
         self.__context_length = context_length
         self.__tokenizer = FullTokenizer(vocab_path) if vocab_path.exists() else None
-        self.image_session = self._init_onnx_session(image_encoder_path)
-        self.text_session = self._init_onnx_session(text_encoder_path)
+        self.image_session = self._init_onnx_session(image_encoder_path, "图像编码器")
+        self.text_session = self._init_onnx_session(text_encoder_path, "文本编码器")
+        self.device_info = self._detect_device_info()
+
+    def _detect_device_info(self) -> str:
+        """从实际加载的 session 读取正在使用的推理设备"""
+        session = self.image_session or self.text_session
+        if session is None:
+            return "未知"
+        actual_providers = session.get_providers()
+        for prov in _GPU_PRIORITY:
+            if prov in actual_providers:
+                return _GPU_PROVIDER_LABELS.get(prov, prov)
+        return "CPU"
 
     def tokenize(self, texts) -> np.ndarray:
         if self.__tokenizer is None:
@@ -53,13 +78,53 @@ class MultiModalEncoder:
             result[i, :len(tokens)] = tokens
         return result
 
-    def _init_onnx_session(self, model_path) -> ort.InferenceSession | None:
+    def _init_onnx_session(self, model_path, name: str = "") -> ort.InferenceSession | None:
+        """逐个尝试 GPU provider，验证实际加载成功，失败则跳过。全部失败后回退 CPU。"""
+        available = ort.get_available_providers()
+
+        # 逐个 GPU provider 尝试，验证实际可用（get_available_providers 可能误报）
+        for prov in _GPU_PRIORITY:
+            if prov not in available:
+                continue
+            try:
+                session = ort.InferenceSession(
+                    str(model_path),
+                    providers=[prov, 'CPUExecutionProvider'],
+                    provider_options=[{}, {}]
+                )
+                actual = session.get_providers()
+                if prov in actual:
+                    label = _GPU_PROVIDER_LABELS.get(prov, prov)
+                    if name:
+                        print(f"  [{name}] 使用加速设备: {label}")
+                    else:
+                        print(f"  使用加速设备: {label}")
+                    return session
+                else:
+                    # Provider 声明可用但实际加载失败（如缺少 cuDNN）
+                    tag = _GPU_PROVIDER_LABELS.get(prov, prov)
+                    if name:
+                        print(f"  [{name}] {tag} 加载失败，尝试下一个...")
+                    else:
+                        print(f"  {tag} 加载失败，尝试下一个...")
+            except Exception as e:
+                tag = _GPU_PROVIDER_LABELS.get(prov, prov)
+                if name:
+                    print(f"  [{name}] {tag} 初始化失败: {e}")
+                else:
+                    print(f"  {tag} 初始化失败: {e}")
+
+        # 全部 GPU 尝试失败，回退 CPU
         try:
             session = ort.InferenceSession(
                 str(model_path),
                 providers=['CPUExecutionProvider'],
                 provider_options=[{'intra_op_num_threads': 1, 'inter_op_num_threads': 1}]
             )
+            if name:
+                print(f"  [{name}] 使用 CPU 推理")
+            else:
+                print(f"  使用 CPU 推理")
             return session
         except Exception as e:
             logging.error(f"加载ONNX模型失败 {model_path}: {e}")
@@ -93,16 +158,16 @@ class MultiModalEncoder:
         if self.image_session is None:
             return None
         
-        processed_image = self._preprocess_image(image_obj)
-        if processed_image is None:
-            return None
         try:
+            processed_image = self._preprocess_image(image_obj)
+            if processed_image is None:
+                return None
             input_name = self.image_session.get_inputs()[0].name
             result = self.image_session.run([], {input_name: processed_image})
             image_features = result[0][0]
             self._normalization(image_features)
         except Exception as e:
-            logging.error(f"编码图像时出现错误: {e}")
+            logging.error(f"编码图像时出现错误，已跳过: {e}")
             return None
         return image_features
     

@@ -18,18 +18,23 @@
         "vocab_path": "config/models/vocab.txt"
     },
     "index_config": {
-        "max_match_count": 10,
+        "max_match_count": 300,
         "vector_index_path": "config/index/vector_index.bin",
         "name_index_path": "config/index/name_index.json",
         "index_capacity": 1000000,
         "index_dim": 512,
         "index_space": "cosine",
-        "search_dir": []
+        "search_dir": [
+            "E:/MaterialSearchWindows - 汇志/汇志png"
+        ]
     },
     "function_config": {
-        "max_work_thread": 10,
+        "max_work_thread": 4,
         "preview_mode": "medium_ico",
-        "auto_update_index": true,
-        "ui_style": "superhero"
+        "auto_update_index": false,
+        "ui_style": "superhero",
+        "photoshop_path": "C:\\Program Files\\ps\\Adobe Photoshop CC 2018\\Photoshop.exe",
+        "similarity_threshold": 0.0,
+        "window_geometry": "1920x1017+-118+17"
     }
 }

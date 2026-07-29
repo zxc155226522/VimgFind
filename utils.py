@@ -1,14 +1,17 @@
 from pathlib import Path
-from queue import Queue
-from threading import Thread
-from typing import Iterator, Callable
+from queue import Queue, Empty
+from threading import Thread, current_thread
+import threading
+from typing import Callable
 from collections import namedtuple
+import datetime
 import logging
 import unicodedata
 import os
 import subprocess
 import functools
 import ctypes
+import hashlib
 import sys
 import io
 import uuid
@@ -20,8 +23,9 @@ import win32clipboard
 import win32con
 from tkinter import Tk
 from PIL import Image, ImageTk, ImageOps, UnidentifiedImageError
+from PIL.Image import DecompressionBombError
 from PIL.ImageFile import ImageFile
-from tqdm import tqdm
+
 
 
 from setting import Setting
@@ -41,7 +45,19 @@ class DROPFILES(ctypes.Structure):
 
 
 class Decorator(object):
+    """线程安全的队列流，每个线程独立的 stdout/stderr"""
+    _thread_streams = {}
+    _thread_streams_lock = threading.Lock()
     progress_queue = Queue()
+
+    @classmethod
+    def _get_thread_stream(cls) -> "QueueStream":
+        tid = current_thread().ident
+        with cls._thread_streams_lock:
+            if tid not in cls._thread_streams:
+                cls._thread_streams[tid] = QueueStream(cls.progress_queue)
+            return cls._thread_streams[tid]
+
     @staticmethod
     def send_task(target):# -> _Wrapped[Callable[..., Any], Any, Callable[..., Any], None]:
         @functools.wraps(target)
@@ -60,10 +76,11 @@ class Decorator(object):
         def inner(*args, **kwargs) -> None:
             original_stdout = sys.stdout
             original_stderr = sys.stderr
-            
-            sys.stdout = QueueStream(Decorator.progress_queue)
-            sys.stderr = QueueStream(Decorator.progress_queue)
- 
+
+            thread_stream = Decorator._get_thread_stream()
+            sys.stdout = thread_stream
+            sys.stderr = thread_stream
+
             try:
                 target(*args, **kwargs)
             finally:
@@ -75,10 +92,12 @@ class Decorator(object):
 
 class FileOperation(object):
     @staticmethod
-    def get_file_iterator(target_dir) -> Iterator[str]:
-        for file_path in tqdm(Path(target_dir).rglob('*'), desc="扫描文件"):
+    def get_file_iterator(target_dir) -> tuple[list[str], int]:
+        files = []
+        for file_path in Path(target_dir).rglob('*'):
             if file_path.is_file() and file_path.suffix.lower() in Setting.accepted_exts:
-                yield str(file_path)
+                files.append(str(file_path))
+        return files, len(files)
 
     @staticmethod
     def open_file(file_path: str | Path, highlight: bool = False) -> None:
@@ -158,11 +177,11 @@ class FileOperation(object):
         dest_path = Path(dest_path)
         if not src_path.exists() or src_path.is_dir() or dest_path.is_dir():
             return False
-        read_mode = 'rb' if is_binary else 'r',
+        read_mode = 'rb' if is_binary else 'r'
         write_mode = 'wb' if is_binary else 'w'
         encoding = None if is_binary else 'utf-8'
         try:
-            with open(src_path, mode=read_mode[0], encoding=encoding) as f_src:
+            with open(src_path, mode=read_mode, encoding=encoding) as f_src:
                 content = f_src.read()
             dest_path = dest_path if inplace else FileOperation.generate_copy_name(dest_path)
             with open(dest_path, mode=write_mode, encoding=encoding) as f_dst:
@@ -312,14 +331,20 @@ class ImageOperation(object):
     def get_image_obj(image_path: str | Path) -> ImageFile | None:
         try:
             return Image.open(image_path)
-        except (UnidentifiedImageError, OSError, FileNotFoundError) as e:
+        except (UnidentifiedImageError, DecompressionBombError, OSError, FileNotFoundError, MemoryError) as e:
+            logging.error(f"加载图片失败，已跳过 {image_path}: {e}")
             return
         
 
 
 LoaderResult = namedtuple("LoaderResult", ["item", "size", "photo", "error"])
 class ImageLoader:
+    THUMB_CACHE_DIR = Path("./temp/thumbnails")
+    MAX_CACHE_SIZE = 200 * 1024 * 1024
+    THUMBNAIL_FILE_SIZE_LIMIT = 3 * 1024 * 1024
+
     def __init__(self) -> None:
+        self.THUMB_CACHE_DIR.mkdir(parents=True, exist_ok=True)
         self.task_queue: Queue[tuple] = Queue()
         self.result_queue: Queue[LoaderResult] = Queue()
         self.threads: list[Thread] = []
@@ -332,27 +357,104 @@ class ImageLoader:
     def add_task(self, item: str, image_path: str, thumbnail_size: int) -> None:
         self.task_queue.put((item, image_path, thumbnail_size))
     
+    def _get_cache_key(self, image_path: str, thumbnail_size: int) -> str:
+        raw = f"{os.path.normpath(image_path)}:{thumbnail_size}"
+        return hashlib.md5(raw.encode()).hexdigest()
+    
+    def _check_cache(self, image_path: str, cache_key: str) -> ImageTk.PhotoImage | None:
+        cache_file = self.THUMB_CACHE_DIR / f"{cache_key}.png"
+        if not cache_file.exists():
+            return None
+        try:
+            orig_mtime = os.path.getmtime(image_path)
+            cache_mtime = os.path.getmtime(cache_file)
+            if orig_mtime > cache_mtime:
+                cache_file.unlink(missing_ok=True)
+                return None
+        except OSError:
+            return None
+        try:
+            img = Image.open(cache_file)
+            return ImageTk.PhotoImage(img)
+        except Exception:
+            cache_file.unlink(missing_ok=True)
+            return None
+    
+    def _save_to_cache(self, img: Image.Image, cache_key: str) -> None:
+        self._maybe_clean_cache()
+        try:
+            cache_file = self.THUMB_CACHE_DIR / f"{cache_key}.png"
+            img.save(cache_file, "PNG")
+        except Exception:
+            pass
+    
+    def _maybe_clean_cache(self) -> None:
+        try:
+            total_size = sum(
+                f.stat().st_size for f in self.THUMB_CACHE_DIR.glob("*.png")
+                if f.is_file()
+            )
+            if total_size > self.MAX_CACHE_SIZE:
+                files = sorted(
+                    self.THUMB_CACHE_DIR.glob("*.png"),
+                    key=lambda f: f.stat().st_mtime
+                )
+                for f in files[:len(files) // 2]:
+                    try:
+                        f.unlink()
+                    except OSError:
+                        pass
+        except Exception:
+            pass
+    
     def _worker(self) -> None:
         while self.running:
             try:
                 item, image_path, thumbnail_size = self.task_queue.get(timeout=1)
             except Exception:
                 continue
+
+            raw_size = (0, 0)
+            try:
+                use_thumbnail = os.path.getsize(image_path) > self.THUMBNAIL_FILE_SIZE_LIMIT
+            except OSError:
+                use_thumbnail = True
+            cache_key = self._get_cache_key(image_path, thumbnail_size) if use_thumbnail else ""
+            cached_photo = self._check_cache(image_path, cache_key) if use_thumbnail else None
+            if cached_photo is not None:
+                img = ImageOperation.get_image_obj(image_path)
+                if img is not None:
+                    raw_size = img.size
+                self.result_queue.put(LoaderResult(
+                    item=item, size=raw_size, photo=cached_photo, error=""
+                ))
+                self.task_queue.task_done()
+                continue
+
             img = ImageOperation.get_image_obj(image_path)
             if img is None:
                 self.result_queue.put(LoaderResult(
                     item=item, size=(0, 0), photo=None, error="加载图片失败！"
-            ))
-            else:
-                width, height = img.size
-                img.thumbnail((thumbnail_size, thumbnail_size))
-                img =  ImageOps.exif_transpose(img)
-                self.result_queue.put(LoaderResult(
-                    item=item,
-                    size=(width, height), 
-                    photo=ImageTk.PhotoImage(img), 
-                    error=""
                 ))
+            else:
+                try:
+                    raw_size = img.size
+                    img.thumbnail((thumbnail_size, thumbnail_size))
+                    img = ImageOps.exif_transpose(img)
+                    photo = ImageTk.PhotoImage(img)
+                    if use_thumbnail:
+                        self._save_to_cache(img, cache_key)
+                    self.result_queue.put(LoaderResult(
+                        item=item,
+                        size=raw_size, 
+                        photo=photo, 
+                        error=""
+                    ))
+                except Exception as e:
+                    logging.error(f"加载缩略图失败，已跳过 {image_path}: {e}")
+                    self.result_queue.put(LoaderResult(
+                        item=item, size=(0, 0), photo=None, error="加载图片失败！"
+                    ))
             self.task_queue.task_done()
                 
     def get_results(self) -> list[LoaderResult]:
@@ -380,5 +482,86 @@ class QueueStream:
 
     def flush(self) -> None:
         pass
+
+
+
+class DatabaseBackup:
+    BACKUP_DIR = Path("./config/backups")
+    RETENTION_DAYS = 30
+    BACKUP_FILES = (
+        Path("./config/setting.json"),
+        Path("./config/index/vector_index.bin"),
+        Path("./config/index/name_index.json"),
+    )
+
+    def __init__(self) -> None:
+        self.BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+
+    @staticmethod
+    def _today_name() -> str:
+        return datetime.date.today().isoformat()
+
+    @staticmethod
+    def _parse_date(backup_name: str) -> datetime.date | None:
+        try:
+            return datetime.date.fromisoformat(backup_name)
+        except ValueError:
+            return None
+
+    def today_backup_path(self) -> Path:
+        return self.BACKUP_DIR / self._today_name()
+
+    def _copy_file(self, src: Path, dst_dir: Path) -> bool:
+        if not src.exists():
+            return False
+        dst = dst_dir / src.name
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+        return True
+
+    def backup(self) -> bool:
+        today_path = self.today_backup_path()
+        if today_path.exists():
+            shutil.rmtree(today_path)
+        today_path.mkdir(parents=True, exist_ok=True)
+        success_count = sum(
+            self._copy_file(f, today_path) for f in self.BACKUP_FILES
+        )
+        return success_count > 0
+
+    def restore(self, backup_name: str) -> bool:
+        backup_path = self.BACKUP_DIR / backup_name
+        if not backup_path.exists() or not backup_path.is_dir():
+            return False
+        self.backup()
+        for src_file in self.BACKUP_FILES:
+            backup_file = backup_path / src_file.name
+            if backup_file.exists():
+                shutil.copy2(backup_file, src_file)
+        return True
+
+    def cleanup(self) -> int:
+        cutoff = datetime.date.today() - datetime.timedelta(days=self.RETENTION_DAYS)
+        removed = 0
+        for entry in self.BACKUP_DIR.iterdir():
+            if not entry.is_dir():
+                continue
+            backup_date = self._parse_date(entry.name)
+            if backup_date is None or backup_date < cutoff:
+                shutil.rmtree(entry)
+                removed += 1
+        return removed
+
+    def get_backup_list(self) -> list[str]:
+        if not self.BACKUP_DIR.exists():
+            return []
+        backups = []
+        for entry in self.BACKUP_DIR.iterdir():
+            if not entry.is_dir():
+                continue
+            if self._parse_date(entry.name) is not None:
+                backups.append(entry.name)
+        backups.sort(reverse=True)
+        return backups
 
 

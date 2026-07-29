@@ -1,0 +1,85 @@
+﻿[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+.vs/
+*.user
+*.suo
+__pycache__/
+*.pyc
+备份文件/
+
+# === 通用编译产物 ===
+bin/
+obj/
+target/
+build/
+
+# === Python ===
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+
+# === Node.js ===
+node_modules/
+
+# === IDE ===
+.vs/
+.vscode/
+*.user
+*.suo
+*.swp
+.idea/
+
+# === 发布产物 ===
+publish/
+publish_*/
+publish_release/
+dist/
+_internal/
+
+# === 调试文件 ===
+*.pdb
+
+# === 日志 ===
+*.log
+日志文件/
+
+# === 临时文件 ===
+*.tmp
+*.bak
+*.cache
+_temp_*
+
+# === 系统 ===
+Thumbs.db
+.DS_Store
+
+# === 备份 ===
+备份文件/
+# === 大文件 ===
+*.onnx
+*.whl
+# === PyInstaller ===
+dist/
+build/
+
+
+# 自动添加-大文件
+/config/models/image_model.onnx
+
+
+# 自动添加-大文件
+/config/models/text_model.onnx
+
+
+# 自动添加-大文件
+/config/models/image_model.onnx
+
+
+# 自动添加-大文件
+/config/models/text_model.onnx
+
