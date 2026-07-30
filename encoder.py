@@ -1,11 +1,16 @@
 from pathlib import Path
 import logging
+import threading
 
 
 from tokenizer import FullTokenizer
 from PIL import Image
+from PIL.ImageFile import ImageFile
 import numpy as np
 import onnxruntime as ort
+
+# 容错处理截断图片，避免 PIL 抛出异常
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 
 _GPU_PRIORITY = [
@@ -23,6 +28,8 @@ _GPU_PROVIDER_LABELS = {
 }
 
 class MultiModalEncoder:
+    _infer_lock = threading.Lock()
+
     def __init__(
             self, 
             vocab_path: Path, 
@@ -163,7 +170,8 @@ class MultiModalEncoder:
             if processed_image is None:
                 return None
             input_name = self.image_session.get_inputs()[0].name
-            result = self.image_session.run([], {input_name: processed_image})
+            with self._infer_lock:
+                result = self.image_session.run([], {input_name: processed_image})
             image_features = result[0][0]
             self._normalization(image_features)
         except Exception as e:
@@ -179,7 +187,8 @@ class MultiModalEncoder:
             text_features_list = []
             for i in range(len(text)):
                 one_text = np.expand_dims(text[i], axis=0)
-                text_feature = self.text_session.run([], {self.text_session.get_inputs()[0].name: one_text})[0].squeeze()
+                with self._infer_lock:
+                    text_feature = self.text_session.run([], {self.text_session.get_inputs()[0].name: one_text})[0].squeeze()
                 text_features_list.append(text_feature)
             text_features = np.stack(text_features_list, axis=0)
             self._normalization(text_features)

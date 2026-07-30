@@ -15,6 +15,18 @@ if sys.stdout is None:
 if sys.stderr is None:
     sys.stderr = io.StringIO()
 
+# 全局异常钩子：未捕获的异常写入 crash.log，便于定位闪退原因
+import traceback
+
+def _crash_handler(exc_type, exc_value, exc_traceback):
+    if issubclass(exc_type, KeyboardInterrupt):
+        sys.__excepthook__(exc_type, exc_value, exc_traceback)
+        return
+    with open("crash.log", "w", encoding="utf-8") as f:
+        traceback.print_exception(exc_type, exc_value, exc_traceback, file=f)
+
+sys.excepthook = _crash_handler
+
 from control import CoreControl
 
 
