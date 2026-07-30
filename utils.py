@@ -116,7 +116,8 @@ class FileOperation(object):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                check=False
+                check=False,
+                creationflags=subprocess.CREATE_NO_WINDOW
             )
             if result.stderr:
                 logging.error(f"[警告] 打开文件时产生提示：{result.stderr.strip()}")

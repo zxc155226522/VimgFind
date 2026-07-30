@@ -153,7 +153,8 @@ class CoreControl(WinGUI):
             result = subprocess.run(
                 ["nvidia-smi", "--query-gpu=utilization.gpu,memory.used,memory.total",
                  "--format=csv,noheader,nounits"],
-                capture_output=True, text=True, timeout=3
+                capture_output=True, text=True, timeout=3,
+                creationflags=subprocess.CREATE_NO_WINDOW
             )
             if result.returncode != 0 or not result.stdout.strip():
                 return ""
@@ -751,7 +752,7 @@ class MenuControl(object):
     def open_with_photoshop(self, file_path: Path) -> None:
         for exe_name in self.PHOTOSHOP_EXE_NAMES:
             try:
-                subprocess.Popen([exe_name, str(file_path)])
+                subprocess.Popen([exe_name, str(file_path)], creationflags=subprocess.CREATE_NO_WINDOW)
                 return
             except FileNotFoundError:
                 pass
@@ -762,7 +763,7 @@ class MenuControl(object):
             if not exe_path.exists():
                 continue
             try:
-                subprocess.Popen([str(exe_path), str(file_path)])
+                subprocess.Popen([str(exe_path), str(file_path)], creationflags=subprocess.CREATE_NO_WINDOW)
                 return
             except Exception as e:
                 messagebox.showerror("错误", f"打开 Photoshop 失败：{e}")
