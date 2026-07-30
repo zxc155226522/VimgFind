@@ -28,6 +28,7 @@ from setting import Setting, WinInfo
 from utils import FileOperation, ImageOperation, Decorator
 from utils import DROPFILES
 from search_tools import SearchTool
+from tray import TrayManager
 import webbrowser
 
 
@@ -51,6 +52,8 @@ class CoreControl(WinGUI):
         self.search_control.set_preview_mode(self.setting.get_config("function", "preview_mode"))
         self.__env_init()
         self.bind_event(first_time=True)
+        self._tray: TrayManager | None = None
+        self.protocol("WM_DELETE_WINDOW", self.__on_close)
         
     def bind_event(self, first_time=False) -> None:
         # 搜索展示控制项
@@ -288,8 +291,28 @@ class CoreControl(WinGUI):
                 messagebox.showerror("错误", f"取消开机启动失败：{e}")
                 self.autostart_btn.state(['selected'])
     
+    def __on_close(self) -> None:
+        """点关闭按钮时隐藏到托盘，不退出程序"""
+        self.withdraw()
+        if self._tray is None:
+            self._tray = TrayManager(
+                WinInfo.ico_path, WinInfo.title,
+                self.__show_from_tray, self.__quit_from_tray
+            )
+            self._tray.start()
+
+    def __show_from_tray(self, icon=None, item=None) -> None:
+        """从托盘恢复窗口"""
+        self.after(0, lambda: (self.deiconify(), self.lift()))
+
+    def __quit_from_tray(self, icon=None, item=None) -> None:
+        """从托盘退出程序"""
+        self.after(0, self.destroy)
+
     def destroy(self) -> None:
         try:
+            if self._tray is not None:
+                self._tray.stop()
             self.setting.modity_config("function", "ui_style", self.theme_combobox.get())
             self.setting.modity_config("function", "auto_update_index", self.auto_update_btn.instate(['selected']))
             self.setting.modity_config("function", "max_work_thread", int(float(self.update_threads_count_scale.get())))

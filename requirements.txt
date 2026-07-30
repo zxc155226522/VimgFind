@@ -7,3 +7,4 @@ pywin32==311
 ttkbootstrap==1.19.0
 tkinterdnd2==0.4.3
 psutil==7.1.3
+pystray==0.19.5
