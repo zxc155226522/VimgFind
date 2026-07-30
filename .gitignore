@@ -1,4 +1,4 @@
-﻿[Bb]in/
+﻿﻿[Bb]in/
 [Oo]bj/
 [Dd]ebug/
 [Rr]elease/
@@ -38,6 +38,7 @@ node_modules/
 publish/
 publish_*/
 publish_release/
+发布/
 dist/
 _internal/
 
