@@ -94,10 +94,10 @@ Write-Host ""
 
 # ----------------------------------------
 # [6/6] 复制配置文件
-#     排除 backups/ 和 error.log
+#     复制到 VimgFind/ 内部（与 EXE 同级），排除 backups/ 和 error.log
 # ----------------------------------------
 Write-Host "[6/6] 复制配置文件" -ForegroundColor Yellow
-$ConfigDest = Join-Path $PublishDir "config"
+$ConfigDest = Join-Path $PublishDir "$AppName\config"
 New-Item -ItemType Directory -Path $ConfigDest -Force | Out-Null
 
 Get-ChildItem -Path "config" -Exclude "backups", "error.log" | ForEach-Object {
