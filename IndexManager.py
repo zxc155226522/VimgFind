@@ -7,7 +7,7 @@ import re
 import numpy as np
 try:
     import hnswlib
-except ModuleNotFoundError:
+except Exception:
     hnswlib = None
 
 
