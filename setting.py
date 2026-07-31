@@ -4,9 +4,12 @@ from typing import Literal
 from datetime import datetime
 import logging
 import ctypes
+import sys
 
 
 class Setting(object):
+    # 程序基准目录：打包后为 EXE 所在目录，开发模式下为项目根目录
+    BASE_DIR = Path(sys.executable).resolve().parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent
     config_path = Path("./config/setting.json")
     help_path = Path("./config/readme.pdf")
     temp_image_path = Path("./temp")
@@ -56,6 +59,26 @@ class Setting(object):
                         pass
         finally:
             self._setup_logging()
+
+    @classmethod
+    def to_rel_path(cls, path: str | Path) -> str:
+        """将绝对路径转为相对路径（仅当路径在 BASE_DIR 下时转换，否则保持原样）"""
+        p = Path(path)
+        if not p.is_absolute():
+            return str(path)
+        try:
+            rel = p.resolve().relative_to(cls.BASE_DIR)
+            return str(rel).replace('\\', '/')
+        except ValueError:
+            return str(path)
+
+    @classmethod
+    def to_abs_path(cls, path: str | Path) -> str:
+        """将相对路径转为绝对路径（已是绝对路径则原样返回）"""
+        p = Path(path)
+        if p.is_absolute():
+            return str(p)
+        return str((cls.BASE_DIR / p).resolve())
 
     def get_config(self, config_type: Literal["model", "index", "function"], key: str):
         config_type_key = f"{config_type}_config"

@@ -238,7 +238,7 @@ class SearchTool(object):
         for img_id, similarity in zip(ids_list, sim_list):
             if similarity < self.__similarity_threshold * 100:
                 continue
-            yield (self.__name_idx_mgr.name_index[img_id][0], similarity)
+            yield (Setting.to_abs_path(self.__name_idx_mgr.name_index[img_id][0]), similarity)
             yielded += 1
             if yielded >= results_count:
                 break
@@ -251,7 +251,7 @@ class SearchTool(object):
             return
         results = self.__name_idx_mgr.search_by_name(query, self.__name_idx_mgr.results_count)
         for _, path in results:
-            yield (path, 100.0)
+            yield (Setting.to_abs_path(path), 100.0)
 
     def is_empty_index(self) -> bool:
         return self.__name_idx_mgr.results_count == 0

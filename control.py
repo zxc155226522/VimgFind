@@ -342,7 +342,7 @@ class SearchControl(object):
 
     def create_path_filter_menu(self) -> None:
         search_dirs = self.core_control.setting.get_config("index", "search_dir") or []
-        valid_dirs = [str(Path(search_dir)) for search_dir in search_dirs if Path(search_dir).exists()]
+        valid_dirs = [Setting.to_abs_path(search_dir) for search_dir in search_dirs if Path(search_dir).exists()]
         self._selected_search_dirs.intersection_update(valid_dirs)
 
         menu = tk.Menu(tearoff=0, activeborderwidth=MenuControl.ACTIVE_BORDER_WIDTH)
@@ -590,15 +590,18 @@ class IndexTableControl(object):
             dir_path = filedialog.askdirectory(title="选择索引文件夹")
             if not dir_path:
                 return
+        # 转为相对路径存储（仅当目录在程序文件夹下时）
+        rel_dir = Setting.to_rel_path(dir_path)
         search_dirs: list = self.core_control.setting.get_config("index", "search_dir")
-        if dir_path in search_dirs:
+        if rel_dir in search_dirs:
             messagebox.showinfo("提示", "新索引的目录已包含在当前索引目录中！")
             return
+        dir_resolved = Path(dir_path).resolve()
         for search_dir in search_dirs:
-            if Path(dir_path).is_relative_to(search_dir):
+            if dir_resolved.is_relative_to(Path(search_dir).resolve()):
                 messagebox.showinfo("提示", "该文件夹是索引目录的子文件夹！")
                 return
-        search_dirs.append(dir_path)
+        search_dirs.append(rel_dir)
         self.refresh_index_dataset_table()
         self.core_control.setting.save_settings()
 
@@ -622,8 +625,9 @@ class IndexTableControl(object):
         search_dirs = self.core_control.setting.get_config("index", "search_dir")
         all_items_count = len(all_items) + 1
         for search_dir in search_dirs:
-            if search_dir not in all_show_dir:
-                tb.insert("", tk.END, values=(all_items_count, search_dir))
+            display_dir = Setting.to_abs_path(search_dir)
+            if display_dir not in all_show_dir:
+                tb.insert("", tk.END, values=(all_items_count, display_dir))
                 all_items_count += 1
 
     @Decorator.send_task
@@ -669,9 +673,14 @@ class IndexTableControl(object):
         dirs_to_delete = []
         search_dir: list = self.core_control.setting.get_config("index", "search_dir")
         for item in selected:
-            delete_search_dir = self.core_control.index_dataset_table.item(item, 'values')[1]
-            dirs_to_delete.append(delete_search_dir)
-            search_dir.remove(delete_search_dir)
+            display_dir = self.core_control.index_dataset_table.item(item, 'values')[1]
+            # 转回存储格式（相对路径）用于从配置列表删除
+            rel_dir = Setting.to_rel_path(display_dir)
+            dirs_to_delete.append(rel_dir)
+            if rel_dir in search_dir:
+                search_dir.remove(rel_dir)
+            elif display_dir in search_dir:
+                search_dir.remove(display_dir)
             self.core_control.index_dataset_table.delete(item)
         self.refresh_index_dataset_table()
         for dir_path in dirs_to_delete:
