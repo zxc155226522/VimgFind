@@ -47,16 +47,20 @@ class Setting(object):
                 return
             with open(Setting.error_log, "r", encoding="utf-8") as f:
                 content = f.readlines()
+            current_date = datetime.today()
+            kept_lines: list[str] = []
+            current_entry_keep = False
+            for line in content:
+                try:
+                    target_date = datetime.fromisoformat(line.split(" ")[0])
+                    delta_days = (current_date - target_date).days
+                    current_entry_keep = delta_days < 7
+                except (ValueError, IndexError):
+                    pass
+                if current_entry_keep:
+                    kept_lines.append(line)
             with open(Setting.error_log, "w", encoding="utf-8") as f:
-                for line in content:
-                    try:
-                        target_date = datetime.fromisoformat(line.split(" ")[0])
-                        current_date = datetime.today()
-                        delta_days = (current_date - target_date).days
-                        if delta_days < 7:
-                            f.write(line)
-                    except (ValueError, IndexError):
-                        pass
+                f.writelines(kept_lines)
         finally:
             self._setup_logging()
 

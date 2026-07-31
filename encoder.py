@@ -184,13 +184,9 @@ class MultiModalEncoder:
             return None
         try:
             text = self.tokenize(input_text)
-            text_features_list = []
-            for i in range(len(text)):
-                one_text = np.expand_dims(text[i], axis=0)
-                with self._infer_lock:
-                    text_feature = self.text_session.run([], {self.text_session.get_inputs()[0].name: one_text})[0].squeeze()
-                text_features_list.append(text_feature)
-            text_features = np.stack(text_features_list, axis=0)
+            input_name = self.text_session.get_inputs()[0].name
+            with self._infer_lock:
+                text_features = self.text_session.run([], {input_name: text})[0]
             self._normalization(text_features)
             return text_features
         except Exception as e:

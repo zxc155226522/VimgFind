@@ -92,11 +92,34 @@ class Decorator(object):
 
 class FileOperation(object):
     @staticmethod
+    def get_dir_size(target_dir: str | Path) -> int:
+        """递归计算目录下所有文件的总大小（字节）"""
+        total = 0
+        for entry in os.scandir(target_dir):
+            if entry.is_dir(follow_symlinks=False):
+                total += FileOperation.get_dir_size(entry.path)
+            elif entry.is_file(follow_symlinks=False):
+                try:
+                    total += entry.stat().st_size
+                except OSError:
+                    pass
+        return total
+
+    @staticmethod
     def get_file_iterator(target_dir) -> tuple[list[str], int]:
-        files = []
-        for file_path in Path(target_dir).rglob('*'):
-            if file_path.is_file() and file_path.suffix.lower() in Setting.accepted_exts:
-                files.append(str(file_path))
+        files: list[str] = []
+        stack = [target_dir]
+        while stack:
+            current = stack.pop()
+            try:
+                with os.scandir(current) as it:
+                    for entry in it:
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(entry.path)
+                        elif entry.is_file(follow_symlinks=False) and Path(entry.name).suffix.lower() in Setting.accepted_exts:
+                            files.append(entry.path)
+            except (PermissionError, OSError):
+                continue
         return files, len(files)
 
     @staticmethod
@@ -412,7 +435,7 @@ class ImageLoader:
         while self.running:
             try:
                 item, image_path, thumbnail_size = self.task_queue.get(timeout=1)
-            except Exception:
+            except Empty:
                 continue
 
             raw_size = (0, 0)

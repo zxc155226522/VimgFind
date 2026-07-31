@@ -44,7 +44,7 @@ class SearchTool(object):
         self.__search_event = Event()
         self.__search_event.set()
         self.__init_event = Event()
-        self.__force_stop_update = False
+        self.__force_stop_event = Event()
         Thread(target=self.__async_init, args=(setting, ), daemon=True).start()
         
     def __async_init(self, setting: Setting) -> None:
@@ -108,7 +108,7 @@ class SearchTool(object):
                 filename = Path(file).name
                 print(f"扫描：{scanned_count}/{total_files} | {filename} | 新增 {len(new_files)}个")
                 last_report_time = now
-            if self.__force_stop_update:
+            if self.__force_stop_event.is_set():
                 break
         print(f"扫描完成：{scanned_count}/{total_files}个 | 新增 {len(new_files)}个 | 耗时 {_format_duration(time.time() - scan_start_time)}")
 
@@ -140,7 +140,7 @@ class SearchTool(object):
         def _process_item(item) -> tuple[int, str, np.ndarray | None, bool]:
             self.__search_event.wait()
             idx, fpath = item
-            if self.__force_stop_update:
+            if self.__force_stop_event.is_set():
                 return idx, fpath, None, False
             try:
                 image_obj = ImageOperation.get_image_obj(fpath)
@@ -273,7 +273,10 @@ class SearchTool(object):
         self.__search_event.clear()
 
     def set_force_end_update(self, state: bool) -> None:
-        self.__force_stop_update = state
+        if state:
+            self.__force_stop_event.set()
+        else:
+            self.__force_stop_event.clear()
 
     def continue_update_index(self) -> None:
         self.__search_event.set()

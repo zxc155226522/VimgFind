@@ -25,7 +25,7 @@ import win32con
 from ui import WinGUI
 from widgets import BasicImagePreviewView, DetailListView, ThumbnailGridView
 from setting import Setting, WinInfo
-from utils import FileOperation, ImageOperation, Decorator
+from utils import FileOperation, ImageOperation, Decorator, DatabaseBackup
 from utils import DROPFILES
 from search_tools import SearchTool
 from tray import TrayManager
@@ -33,6 +33,59 @@ import webbrowser
 
 
 from PIL import Image
+
+
+class RestoreDialog(tk.Toplevel):
+    def __init__(self, parent: tk.Tk, backup_list: list[str]) -> None:
+        super().__init__(parent)
+        self.title("选择恢复备份")
+        self.result: str | None = None
+        self.transient(parent)
+        self.grab_set()
+
+        frame = tk.Frame(self, padx=10, pady=10)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        tk.Label(frame, text="请选择要恢复的备份日期：", font=("微软雅黑", 12)).pack(anchor=tk.W, pady=(0, 5))
+
+        list_frame = tk.Frame(frame)
+        list_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+
+        scrollbar = tk.Scrollbar(list_frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self.listbox = tk.Listbox(list_frame, yscrollcommand=scrollbar.set, font=("微软雅黑", 10))
+        self.listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.config(command=self.listbox.yview)
+
+        for backup in backup_list:
+            self.listbox.insert(tk.END, backup)
+        if backup_list:
+            self.listbox.selection_set(0)
+
+        btn_frame = tk.Frame(frame)
+        btn_frame.pack(fill=tk.X, pady=(10, 0))
+
+        tk.Button(btn_frame, text="取消", command=self._cancel).pack(side=tk.RIGHT, padx=(5, 0))
+        tk.Button(btn_frame, text="恢复", command=self._confirm).pack(side=tk.RIGHT)
+
+        self.update_idletasks()
+        w = self.winfo_width()
+        h = self.winfo_height()
+        x = parent.winfo_rootx() + (parent.winfo_width() - w) // 2
+        y = parent.winfo_rooty() + (parent.winfo_height() - h) // 2
+        self.geometry(f"{w}x{h}+{x}+{y}")
+
+        self.wait_window()
+
+    def _confirm(self) -> None:
+        selection = self.listbox.curselection()
+        if selection:
+            self.result = self.listbox.get(selection[0])
+        self.destroy()
+
+    def _cancel(self) -> None:
+        self.destroy()
 
 
 class CoreControl(WinGUI):
@@ -79,10 +132,13 @@ class CoreControl(WinGUI):
         self.search_btn.config(command=lambda: self.search_control.search_image_by_text())
         self.search_entry.bind("<<Paste>>", self.__on_search_entry_paste)
         self.search_entry.bind("<FocusOut>", lambda e: self.after(50, self.search_entry.focus_set))
+        self._search_mode_var.trace_add("write", self.search_control.on_search_mode_changed)
         self.result_count_entry.bind("<Return>", self.search_control.apply_result_count_from_entry)
         self.result_count_entry.bind("<FocusOut>", self.search_control.apply_result_count_from_entry)
         self.preview_detail_btn.config(command=lambda: self.search_control.set_preview_mode("detail_info"))
         self.preview_icon_btn.config(command=lambda: self.search_control.set_preview_mode("medium_ico"))
+        self.similarity_scale.config(command=self.search_control.set_similarity_threshold)
+        self.sort_combo.bind("<<ComboboxSelected>>", self.search_control.sort_results)
         
         # 索引设置项
         self.index_dataset_table.bind("<Double-Button-1>", self.menu_control.double_click_open_file)
@@ -95,6 +151,8 @@ class CoreControl(WinGUI):
         self.theme_combobox.bind("<<ComboboxSelected>>", lambda e: self.__change_theme())
         self.open_setting_file_button.config(command=lambda: FileOperation.open_file(Setting.config_path))
         self.open_repertory_button.config(command=lambda: webbrowser.open(r"https://github.com/Just-A-Freshman/VimgFind"))
+        self.backup_button.config(command=self.backup_database)
+        self.restore_button.config(command=self.restore_database)
         self.__init_autostart_button()
 
         # 全局事件处理
@@ -120,6 +178,7 @@ class CoreControl(WinGUI):
             self.index_table_control.sync_index(show_message=False)
         else:
             self.index_table_control.update_index_tip()
+        self.__daily_backup()
 
     def __update_device_info(self) -> None:
         """读取编码器设备信息并显示到界面上"""
@@ -171,6 +230,57 @@ class CoreControl(WinGUI):
         except Exception:
             pass
         return ""
+
+    def __init_settings_bar(self) -> None:
+        """从配置初始化搜索设置栏（相似度滑块、结果数量、窗口位置）"""
+        threshold = self.setting.get_config("function", "similarity_threshold")
+        self.similarity_scale.set(int(threshold * 100))
+        self.similarity_label.config(text=f"相似度: {int(threshold * 100)}%")
+        max_count = self.setting.get_config("index", "max_match_count") or 100
+        self.result_count_entry.delete(0, tk.END)
+        self.result_count_entry.insert(0, str(max_count))
+        self.similarity_scale.configure(state=tk.DISABLED)
+        geometry = self.setting.get_config("function", "window_geometry")
+        if geometry:
+            try:
+                self.geometry(geometry)
+            except tk.TclError:
+                pass
+
+    def __daily_backup(self) -> None:
+        """启动时自动清理过期备份并执行当日备份"""
+        self.backup_manager.cleanup()
+        if not self.backup_manager.today_backup_path().exists():
+            self.backup_manager.backup()
+
+    def backup_database(self) -> None:
+        success = self.backup_manager.backup()
+        if success:
+            messagebox.showinfo("提示", "数据库备份成功！")
+        else:
+            messagebox.showwarning("警告", "数据库备份失败，请检查索引文件是否存在。")
+
+    def restore_database(self) -> None:
+        backup_list = self.backup_manager.get_backup_list()
+        if not backup_list:
+            messagebox.showinfo("提示", "没有可用的备份文件。")
+            return
+        dialog = RestoreDialog(self, backup_list)
+        if dialog.result is None:
+            return
+        self.search_tools.stop_update_index()
+        try:
+            self.search_tools.save_index()
+            success = self.backup_manager.restore(dialog.result)
+            if success:
+                self.search_tools.reset_index()
+                messagebox.showinfo("提示", f"已从 {dialog.result} 恢复数据库，请重启程序使更改生效。")
+            else:
+                messagebox.showerror("错误", "数据库恢复失败。")
+        except Exception as e:
+            messagebox.showerror("错误", f"恢复过程中发生错误：{e}")
+        finally:
+            self.search_tools.continue_update_index()
 
     def __change_theme(self, setting_theme=False) -> None:
         style = Style()
@@ -317,10 +427,12 @@ class CoreControl(WinGUI):
             self.setting.modity_config("function", "ui_style", self.theme_combobox.get())
             self.setting.modity_config("function", "auto_update_index", self.auto_update_btn.instate(['selected']))
             self.setting.modity_config("function", "max_work_thread", int(float(self.update_threads_count_scale.get())))
+            self.setting.modity_config("function", "window_geometry", self.geometry())
             self.setting.save_settings()
             self.setting.clean_log()
             self.search_tools.destroy()
             self.search_tools.save_index()
+            self.backup_manager.backup()
             FileOperation.clear_folder_all(Setting.temp_image_path)
             self.search_tools.set_force_end_update(True)
         except Exception as e:
@@ -339,6 +451,13 @@ class SearchControl(object):
         self._switching_mode: bool = False
         self._selected_search_dirs: set[str] = set()
         self.core_control = core_control
+
+    def on_search_mode_changed(self, *_) -> None:
+        self._is_name_search = self.core_control._search_mode_var.get()
+        if self._is_name_search:
+            self.core_control.similarity_scale.configure(state=tk.DISABLED)
+        else:
+            self.core_control.similarity_scale.configure(state=tk.NORMAL)
 
     def create_path_filter_menu(self) -> None:
         search_dirs = self.core_control.setting.get_config("index", "search_dir") or []
@@ -426,7 +545,7 @@ class SearchControl(object):
                 return
         else:
             image_path = FileOperation.generate_unique_filename(Setting.temp_image_path, ".jpg")
-            if os.path.getsize(Setting.temp_image_path) > 1024 * 1024 * 30:
+            if FileOperation.get_dir_size(Setting.temp_image_path) > 1024 * 1024 * 30:
                 FileOperation.clear_folder_all(Setting.temp_image_path)
             if not image_path.parent.exists():
                 Path.mkdir(Setting.temp_image_path, exist_ok=True)
@@ -512,8 +631,24 @@ class SearchControl(object):
         self.core_control.search_tools.update_max_match_count(max_match_count)
         self.core_control.result_count_entry.delete(0, tk.END)
         self.core_control.result_count_entry.insert(0, str(max_match_count))
+        self._re_search()
+
+    @Decorator.send_task
+    def _re_search(self) -> None:
         if self._last_search_content:
             self.__search_image(self._last_search_content)
+
+    def set_similarity_threshold(self, value: str) -> None:
+        threshold = int(float(value)) / 100
+        self.core_control.similarity_label.config(text=f"相似度: {int(float(value))}%")
+        self.core_control.setting.modity_config("function", "similarity_threshold", threshold)
+        self.core_control.search_tools.update_similarity_threshold(threshold)
+        self._re_search()
+
+    def sort_results(self, *_) -> None:
+        view = self.core_control.preview_view
+        sort_key = self.core_control.sort_combo.get()
+        view.sort_results(sort_key)
 
     def apply_result_count_from_entry(self, event: tk.Event | None = None) -> None:
         raw_count = self.core_control.result_count_entry.get().strip()

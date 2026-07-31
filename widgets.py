@@ -3,6 +3,7 @@ from tkinter.ttk import Treeview, Scrollbar
 from ttkbootstrap import Style, tooltip
 from typing import Callable, Any
 from collections import OrderedDict, namedtuple
+from concurrent.futures import ThreadPoolExecutor
 import math
 import hashlib
 import os
@@ -68,6 +69,9 @@ class BasicImagePreviewView(object):
         pass
 
     def set_search_text(self, text: str) -> None:
+        pass
+
+    def sort_results(self, sort_key: str) -> None:
         pass
 
     def destroy(self) -> None:
@@ -244,6 +248,7 @@ class PreviewCanvasView(BasicImagePreviewView):
 class DetailListView(BasicImagePreviewView):
     THUMB_SIZE = 40
     THUMBNAIL_FILE_SIZE_LIMIT = 3 * 1024 * 1024
+    _executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="detail-thumb")
 
     def __init__(self, parent: tk.Widget, extra_columns: dict[str, int]) -> None:
         super().__init__(parent)
@@ -308,8 +313,7 @@ class DetailListView(BasicImagePreviewView):
                 self.parent.after(0, lambda: self._set_thumbnail(iid, photo))
             except Exception:
                 pass
-        import threading
-        threading.Thread(target=_do_load, daemon=True).start()
+        self._executor.submit(_do_load)
 
     def _set_thumbnail(self, iid: str, photo: ImageTk.PhotoImage) -> None:
         if self._is_destroy:
@@ -345,6 +349,12 @@ class DetailListView(BasicImagePreviewView):
         if sequence == "<<ItemviewSelect>>":
             sequence = "<<TreeviewSelect>>"
         self.__treeview.bind(sequence, func)
+
+    def sort_results(self, sort_key: str) -> None:
+        col_map = {"相似度": "相似度", "文件名": "名称", "大小": "大小", "修改时间": "修改时间"}
+        col = col_map.get(sort_key)
+        if col:
+            self._sort_column(col, False)
 
     def destroy(self) -> None:
         self._is_destroy = True
@@ -984,12 +994,11 @@ class ThumbnailGridView(BasicImagePreviewView):
         
         start_row = max(0, canvas_y1 // item_height - self.PRELOAD_ROWS)
         end_row = min(math.ceil(len(self._results) / self._cols), canvas_y2 // item_height + self.PRELOAD_ROWS)
-        start_index = int(start_row * self._cols)
+        start_index = max(0, int(start_row * self._cols))
         end_index = int(min(end_row * self._cols - 1, len(self._results) - 1))
         new_visible_items = set()
-        for index, item in enumerate(self._results):
-            if index < start_index or index > end_index:
-                continue
+        all_items = list(self._results.keys())
+        for item in all_items[start_index:end_index + 1]:
             new_visible_items.add(item)
             if (item not in self._visible_image_data and item not in self._loading_tasks):
                 self._loading_tasks.add(item)
