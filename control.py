@@ -54,6 +54,8 @@ class CoreControl(WinGUI):
         self.bind_event(first_time=True)
         self._tray: TrayManager | None = None
         self.protocol("WM_DELETE_WINDOW", self.__on_close)
+        # 在主线程中调度定时保存，确保可靠执行（不能放在 __env_init 子线程中）
+        self.after(self.setting.schedule_save_interval, self.__schedule_save)
         
     def bind_event(self, first_time=False) -> None:
         # 搜索展示控制项
@@ -118,7 +120,6 @@ class CoreControl(WinGUI):
             self.index_table_control.sync_index(show_message=False)
         else:
             self.index_table_control.update_index_tip()
-        self.after(self.setting.schedule_save_interval, self.__schedule_save)
 
     def __update_device_info(self) -> None:
         """读取编码器设备信息并显示到界面上"""
@@ -643,6 +644,8 @@ class IndexTableControl(object):
                     image_dir,
                     int(float(self.core_control.update_threads_count_scale.get()))
                 )
+        # 索引更新完成后立即保存，防止闪退导致索引丢失
+        self.core_control.search_tools.save_index()
         self.core_control.update_index_button.config(text="更新索引目录", command=self.sync_index)
         self.core_control.delete_index_button.config(state=tk.ACTIVE)
         self.core_control.rebuild_index_button.config(state=tk.ACTIVE)

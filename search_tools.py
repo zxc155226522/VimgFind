@@ -176,6 +176,9 @@ class SearchTool(object):
                 if completed_count == total or now - last_report_time >= 0.2:
                     print(_format_progress("更新索引", completed_count, total, update_start_time))
                     last_report_time = now
+                # 每处理 200 张图片保存一次索引，防止闪退导致进度全部丢失
+                if completed_count % 200 == 0:
+                    self.save_index()
     
     def remove_nonexists(self) -> None:
         self.__init_event.wait()
