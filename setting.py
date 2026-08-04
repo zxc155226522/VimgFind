@@ -14,7 +14,7 @@ class Setting(object):
     help_path = Path("./config/readme.pdf")
     temp_image_path = Path("./temp")
     error_log = Path("./config/error.log")
-    accepted_exts = {'.png', '.jpg', '.jpeg', '.tiff', '.bmp', '.gif', '.webp'}
+    accepted_exts = {'.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp', '.gif', '.webp'}
     schedule_save_interval = 600000
 
     def __init__(self) -> None:
