@@ -21,7 +21,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['torch', 'tensorflow', 'pygame', 'hnswlib'],
+    excludes=['torch', 'tensorflow', 'pygame'],
     noarchive=False,
     optimize=0,
 )
