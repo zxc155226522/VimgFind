@@ -469,20 +469,44 @@ class SearchControl(object):
 
     def create_path_filter_menu(self) -> None:
         search_dirs = self.core_control.setting.get_config("index", "search_dir") or []
-        valid_dirs = [Setting.to_abs_path(search_dir) for search_dir in search_dirs if Path(search_dir).exists()]
+        valid_dirs = [Setting.to_abs_path(d) for d in search_dirs if Path(Setting.to_abs_path(d)).exists()]
         self._selected_search_dirs.intersection_update(valid_dirs)
 
         menu = tk.Menu(tearoff=0, activeborderwidth=MenuControl.ACTIVE_BORDER_WIDTH)
         menu.add_command(label="全部路径", command=self.clear_path_filter)
         if valid_dirs:
             menu.add_separator()
+
+        # 保持 BooleanVar 引用，防止垃圾回收导致勾选状态丢失
+        self._path_filter_vars: list[tk.BooleanVar] = []
         for search_dir in valid_dirs:
-            selected = tk.BooleanVar(value=search_dir in self._selected_search_dirs)
+            var = tk.BooleanVar(value=search_dir in self._selected_search_dirs)
+            self._path_filter_vars.append(var)
             menu.add_checkbutton(
                 label=search_dir,
-                variable=selected,
+                variable=var,
                 command=lambda d=search_dir: self.toggle_path_filter(d)
             )
+            # 为有子目录的索引目录添加级联子菜单
+            try:
+                subdirs = [
+                    (e.path, e.name) for e in os.scandir(search_dir)
+                    if e.is_dir(follow_symlinks=False)
+                ]
+            except (PermissionError, OSError):
+                subdirs = []
+            if subdirs:
+                sub_menu = tk.Menu(menu, tearoff=0)
+                for subdir_path, subdir_name in subdirs:
+                    sub_var = tk.BooleanVar(value=subdir_path in self._selected_search_dirs)
+                    self._path_filter_vars.append(sub_var)
+                    sub_menu.add_checkbutton(
+                        label=subdir_name,
+                        variable=sub_var,
+                        command=lambda d=subdir_path: self.toggle_path_filter(d)
+                    )
+                menu.add_cascade(label=f"  {Path(search_dir).name} 的子目录", menu=sub_menu)
+
         menu.post(
             self.core_control.path_filter_btn.winfo_rootx(),
             self.core_control.path_filter_btn.winfo_rooty() + self.core_control.path_filter_btn.winfo_height()
@@ -495,14 +519,12 @@ class SearchControl(object):
         else:
             self._selected_search_dirs.add(search_dir)
         self._update_path_filter_button()
-        if self._last_search_content:
-            self.__search_image(self._last_search_content)
+        self._re_search()
 
     def clear_path_filter(self) -> None:
         self._selected_search_dirs.clear()
         self._update_path_filter_button()
-        if self._last_search_content:
-            self.__search_image(self._last_search_content)
+        self._re_search()
 
     def _update_path_filter_button(self) -> None:
         selected_count = len(self._selected_search_dirs)
