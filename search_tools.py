@@ -1,5 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from threading import Thread, Event
+from threading import Thread, Event, Lock
 from pathlib import Path
 from typing import Iterator
 from re import split
@@ -45,6 +45,7 @@ class SearchTool(object):
         self.__search_event.set()
         self.__init_event = Event()
         self.__force_stop_event = Event()
+        self.__index_lock = Lock()
         Thread(target=self.__async_init, args=(setting, ), daemon=True).start()
         
     def __async_init(self, setting: Setting) -> None:
@@ -166,11 +167,13 @@ class SearchTool(object):
             for future in as_completed(futures):
                 idx, fpath, fv, skipped = future.result()
                 if fv is not None:
-                    self.__vec_idx_mgr.add_vector(fv, idx)
-                    self.__name_idx_mgr.add_name(fpath, idx)
+                    with self.__index_lock:
+                        self.__vec_idx_mgr.add_vector(fv, idx)
+                        self.__name_idx_mgr.add_name(fpath, idx)
                 elif skipped:
-                    self.__vec_idx_mgr.delete_vector(idx)
-                    self.__name_idx_mgr.add_skipped_name(fpath, idx)
+                    with self.__index_lock:
+                        self.__vec_idx_mgr.delete_vector(idx)
+                        self.__name_idx_mgr.add_skipped_name(fpath, idx)
                 completed_count += 1
                 now = time.time()
                 if completed_count == total or now - last_report_time >= 0.2:
@@ -192,8 +195,9 @@ class SearchTool(object):
         for idx, (index_file, _) in enumerate(self.__name_idx_mgr.name_index):
             done = idx + 1
             if not (Path(index_file).exists() or index_file == NameIndexManager.NOTEXISTS):
-                self.__name_idx_mgr.delete_name(idx)
-                self.__vec_idx_mgr.delete_vector(idx)
+                with self.__index_lock:
+                    self.__name_idx_mgr.delete_name(idx)
+                    self.__vec_idx_mgr.delete_vector(idx)
                 removed_count += 1
             now = time.time()
             if done == total or now - last_report_time >= 0.2:
@@ -209,8 +213,9 @@ class SearchTool(object):
             file_path = Path(index_file).resolve()
             if not file_path.is_relative_to(directory_path):
                 continue
-            self.__name_idx_mgr.delete_name(idx)
-            self.__vec_idx_mgr.delete_vector(idx)
+            with self.__index_lock:
+                self.__name_idx_mgr.delete_name(idx)
+                self.__vec_idx_mgr.delete_vector(idx)
 
     def checkout(self, content: Image.Image | str) -> Iterator[tuple[str, float]]:
         self.__init_event.wait()
@@ -231,14 +236,16 @@ class SearchTool(object):
         if fv is None:
             return
 
-        search_count = min(results_count * 3, self.__name_idx_mgr.valid_index_count)
-        sim_list, ids_list = self.__vec_idx_mgr.match(fv, search_count)
+        with self.__index_lock:
+            search_count = min(results_count * 3, self.__name_idx_mgr.valid_index_count)
+            sim_list, ids_list = self.__vec_idx_mgr.match(fv, search_count)
+            name_index_snapshot = list(self.__name_idx_mgr.name_index)
 
         yielded = 0
         for img_id, similarity in zip(ids_list, sim_list):
             if similarity < self.__similarity_threshold * 100:
                 continue
-            yield (Setting.to_abs_path(self.__name_idx_mgr.name_index[img_id][0]), similarity)
+            yield (Setting.to_abs_path(name_index_snapshot[img_id][0]), similarity)
             yielded += 1
             if yielded >= results_count:
                 break
@@ -249,7 +256,8 @@ class SearchTool(object):
         self.__init_event.wait()
         if not query:
             return
-        results = self.__name_idx_mgr.search_by_name(query, self.__name_idx_mgr.results_count)
+        with self.__index_lock:
+            results = self.__name_idx_mgr.search_by_name(query, self.__name_idx_mgr.results_count)
         for _, path in results:
             yield (Setting.to_abs_path(path), 100.0)
 
@@ -258,16 +266,18 @@ class SearchTool(object):
     
     def reset_index(self) -> None:
         self.__init_event.wait()
-        self.__vec_idx_mgr.reset_index()
-        self.__name_idx_mgr.reset_index()
+        with self.__index_lock:
+            self.__vec_idx_mgr.reset_index()
+            self.__name_idx_mgr.reset_index()
 
     def save_index(self) -> None:
         self.__init_event.wait()
-        try:
-            self.__vec_idx_mgr.save_index()
-            self.__name_idx_mgr.save_index()
-        except Exception as e:
-            logging.error(f"保存索引时出现错误: {e}")
+        with self.__index_lock:
+            try:
+                self.__vec_idx_mgr.save_index()
+                self.__name_idx_mgr.save_index()
+            except Exception as e:
+                logging.error(f"保存索引时出现错误: {e}")
 
     def stop_update_index(self) -> None:
         self.__search_event.clear()

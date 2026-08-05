@@ -36,7 +36,16 @@ class VectorIndexManager:
         if self.__use_hnsw:
             self.__hnsw_index = hnswlib.Index(space=self.__space, dim=self.__dim)
             if Path(self.__index_path).exists():
-                self.__hnsw_index.load_index(self.__index_path, max_elements=self.__index_capacity)
+                try:
+                    self.__hnsw_index.load_index(self.__index_path, max_elements=self.__index_capacity)
+                except Exception as e:
+                    logging.error(f"加载向量索引失败，已重置为空索引: {e}")
+                    self.__hnsw_index.init_index(
+                        max_elements=self.__index_capacity,
+                        ef_construction=200,
+                        M=32,
+                        random_seed=42
+                    )
             else:
                 self.__hnsw_index.init_index(
                     max_elements=self.__index_capacity, 

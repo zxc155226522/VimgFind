@@ -94,6 +94,7 @@ class CoreControl(WinGUI):
         self.setting = Setting()
         self.__change_theme(setting_theme=True)
         self.search_tools = SearchTool(self.setting)
+        self.backup_manager = DatabaseBackup()
         self._process_monitor = psutil.Process(os.getpid()) if psutil else None
         if self._process_monitor:
             self._process_monitor.cpu_percent(interval=None)
@@ -430,11 +431,12 @@ class CoreControl(WinGUI):
             self.setting.modity_config("function", "window_geometry", self.geometry())
             self.setting.save_settings()
             self.setting.clean_log()
-            self.search_tools.destroy()
+            # 先强制停止后台更新线程，再保存索引，避免并发写入导致索引损坏
+            self.search_tools.set_force_end_update(True)
             self.search_tools.save_index()
+            self.search_tools.destroy()
             self.backup_manager.backup()
             FileOperation.clear_folder_all(Setting.temp_image_path)
-            self.search_tools.set_force_end_update(True)
         except Exception as e:
             messagebox.showerror("错误", str(e))
         finally:
