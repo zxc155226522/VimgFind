@@ -133,7 +133,7 @@ class CoreControl(WinGUI):
         self.search_entry.bind("<Return>", lambda e: self.search_control.search_image_by_text())
         self.search_btn.config(command=lambda: self.search_control.search_image_by_text())
         self.search_entry.bind("<<Paste>>", self.__on_search_entry_paste)
-        self.search_entry.bind("<FocusOut>", lambda e: self.after(50, self.search_entry.focus_set))
+        self.search_entry.bind("<FocusOut>", lambda e: self.after(50, self.__refocus_search_entry))
         self._search_mode_var.trace_add("write", self.search_control.on_search_mode_changed)
         self.result_count_entry.bind("<Return>", self.search_control.apply_result_count_from_entry)
         self.result_count_entry.bind("<FocusOut>", self.search_control.apply_result_count_from_entry)
@@ -314,6 +314,11 @@ class CoreControl(WinGUI):
         file_paths = FileOperation.extract_file_paths(file_paths_str)
         if file_paths:
             self.search_control.search_by_browser(file_paths[0])
+
+    def __refocus_search_entry(self) -> None:
+        """搜索框失焦后，仅当焦点未转移到其他控件时才抢回（避免影响排序下拉框等交互）"""
+        if self.focus_get() is None:
+            self.search_entry.focus_set()
 
     def __on_search_entry_paste(self, event: tk.Event) -> None:
         """搜索框 Ctrl+V/Win+V 粘贴：检测图片路径或图片数据，自动搜索"""
