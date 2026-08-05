@@ -80,6 +80,10 @@ class VectorIndexManager:
         FileOperation.delete_file(self.__index_path)
         self.__init_index()
 
+    def reload_index(self) -> None:
+        """从磁盘重新加载索引文件（不删除文件），用于备份恢复后重载"""
+        self.__init_index()
+
     def save_index(self) -> None:
         if self.__use_hnsw:
             self.__hnsw_index.save_index(self.__index_path)
@@ -297,6 +301,10 @@ class NameIndexManager(object):
 
     def reset_index(self) -> None:
         FileOperation.delete_file(self.__name_index_path)
+        self.__init_index()
+
+    def reload_index(self) -> None:
+        """从磁盘重新加载索引文件（不删除文件），用于备份恢复后重载"""
         self.__init_index()
 
     def save_index(self) -> None:

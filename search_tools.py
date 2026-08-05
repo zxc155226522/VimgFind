@@ -270,6 +270,13 @@ class SearchTool(object):
             self.__vec_idx_mgr.reset_index()
             self.__name_idx_mgr.reset_index()
 
+    def reload_index(self) -> None:
+        """从磁盘重新加载索引（不删除文件），用于备份恢复后重载"""
+        self.__init_event.wait()
+        with self.__index_lock:
+            self.__vec_idx_mgr.reload_index()
+            self.__name_idx_mgr.reload_index()
+
     def save_index(self) -> None:
         self.__init_event.wait()
         with self.__index_lock:

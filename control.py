@@ -104,6 +104,7 @@ class CoreControl(WinGUI):
         self.search_control = SearchControl(self)
         self.menu_control = MenuControl(self)
         self.search_control.set_preview_mode(self.setting.get_config("function", "preview_mode"))
+        self.__init_settings_bar()
         self.__env_init()
         self.bind_event(first_time=True)
         self._tray: TrayManager | None = None
@@ -274,7 +275,7 @@ class CoreControl(WinGUI):
             self.search_tools.save_index()
             success = self.backup_manager.restore(dialog.result)
             if success:
-                self.search_tools.reset_index()
+                self.search_tools.reload_index()
                 messagebox.showinfo("提示", f"已从 {dialog.result} 恢复数据库，请重启程序使更改生效。")
             else:
                 messagebox.showerror("错误", "数据库恢复失败。")

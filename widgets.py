@@ -527,6 +527,8 @@ class ThumbnailGridView(BasicImagePreviewView):
         items_list = list(self._results.keys())
         if not items_list or self._cols == 0:
             return
+        if not self._selected_items:
+            return
         target_index = -1
         max_index = len(items_list) - 1
         current_index = max(self._get_item_index(item) for item in self._selected_items)
@@ -1138,7 +1140,8 @@ class ThumbnailGridView(BasicImagePreviewView):
         self._is_destroy = True
         self._cancel_timer()
         self._image_loader.stop()
-        self._scrollbar.destroy()
+        if hasattr(self, '_scrollbar'):
+            self._scrollbar.destroy()
         self._canvas.destroy()
 
 
